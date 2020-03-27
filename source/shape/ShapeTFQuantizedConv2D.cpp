@@ -5,10 +5,10 @@
 //  Created by MNN on 2019/01/10.
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
-
+#ifdef MNN_SUPPORT_TFLITE_QUAN
 #include <math.h>
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 class TFQuantizedConv2DComputer : public SizeComputer {
@@ -47,7 +47,7 @@ class TFQuantizedConv2DComputer : public SizeComputer {
         outputBuffer.dim[3].extent = output_width;
 
         outputs[0]->buffer().type = halide_type_of<uint8_t>();
-
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
         return true;
     }
 
@@ -71,3 +71,4 @@ class TFQuantizedConv2DComputer : public SizeComputer {
 REGISTER_SHAPE(TFQuantizedConv2DComputer, OpType_TfQuantizedConv2D);
 REGISTER_SHAPE(TFQuantizedConv2DComputer, OpType_QuantizedDepthwiseConv2D);
 } // namespace MNN
+#endif

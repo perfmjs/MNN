@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#import "MetalReshape.hpp"
-#import "MNNMetalContext.h"
-#import "Macro.h"
-#import "MetalBackend.hpp"
-#import "TensorUtils.hpp"
+#import "backend/metal/MetalReshape.hpp"
+#import "backend/metal/MNNMetalContext.h"
+#import "core/Macro.h"
+#import "backend/metal/MetalBackend.hpp"
+#import "core/TensorUtils.hpp"
 
 #if MNN_METAL_ENABLED
 namespace MNN {
@@ -47,8 +47,6 @@ ErrorCode MetalReshape::onResize(const std::vector<Tensor *> &inputs, const std:
 
         TensorUtils::getDescribe(mMiddle.get())->dimensionFormat = fmt;
         TensorUtils::getDescribe(mCarbon.get())->dimensionFormat = fmt;
-        mMiddle->buffer().dim[1].flags                           = 0;
-        mCarbon->buffer().dim[1].flags                           = 0;
 
         // acquire buffer space
         auto backend = static_cast<MetalBackend *>(this->backend());

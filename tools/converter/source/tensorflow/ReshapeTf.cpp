@@ -20,12 +20,12 @@ MNN::OpParameter ReshapeTf::type() {
     return MNN::OpParameter_Reshape;
 }
 
-void ReshapeTf::run(MNN::OpT *dstOp, TmpNode *srcNode, TmpGraph *tempGraph) {
-    auto reshape = new MNN::ReshapeT;
-
+void ReshapeTf::run(MNN::OpT *dstOp, TmpNode *srcNode) {
+    auto reshape      = new MNN::ReshapeT;
+    dstOp->main.value = reshape;
+#ifdef TF_CONVERT_ORIGIN
     TmpNode *shapeNode = tempGraph->_getTmpNode(srcNode->inEdges[1]);
     if (shapeNode->opType != "Const") {
-        dstOp->main.value = reshape;
         return;
     }
 
@@ -36,7 +36,15 @@ void ReshapeTf::run(MNN::OpT *dstOp, TmpNode *srcNode, TmpGraph *tempGraph) {
         CHECK(dataType == MNN::DataType_DT_INT32) << "Shape Dtype ERROR" << srcNode->opName;
 
         reshape->dimType = MNN::MNN_DATA_FORMAT_NHWC;
-        if (!value.tensor().tensor_content().empty()) // int32
+
+        const int repeatedSize = value.tensor().int_val_size();
+        // firstly get value from repeated field
+        if (repeatedSize != 0) {
+            reshape->dims.resize(repeatedSize);
+            for (int i = 0; i < repeatedSize; ++i) {
+                reshape->dims[i] = value.tensor().int_val(i);
+            }
+        } else if (!value.tensor().tensor_content().empty()) // int32
         {
             const int *data = reinterpret_cast<const int *>(value.tensor().tensor_content().c_str());
             int size        = value.tensor().tensor_content().size() / sizeof(int);
@@ -51,8 +59,7 @@ void ReshapeTf::run(MNN::OpT *dstOp, TmpNode *srcNode, TmpGraph *tempGraph) {
             reshape->dims[0] = value.tensor().int_val(0);
         }
     }
-
-    dstOp->main.value = reshape;
+#endif
 }
 
 REGISTER_CONVERTER(ReshapeTf, Reshape);

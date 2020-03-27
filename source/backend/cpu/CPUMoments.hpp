@@ -9,7 +9,7 @@
 #ifndef CPUMoments_hpp
 #define CPUMoments_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 
 namespace MNN {
 
@@ -21,6 +21,8 @@ public:
     virtual ErrorCode onResize(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) override;
 
 private:
+    void CalculateMean(const float* src, float* dst, int batch, int channelDiv4, int inImageSize, int inBatchStride,
+                       int outBatchStride);
     std::vector<int> mAxis;
     bool mKeepDims;
     std::shared_ptr<Tensor> mMidBuffer;

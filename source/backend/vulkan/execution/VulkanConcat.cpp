@@ -6,27 +6,15 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanConcat.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/vulkan/execution/VulkanConcat.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 namespace MNN {
 struct ConcatParam {
     ivec4 inImageSize;
     ivec4 outImageSize;
     ivec4 offset; // w, h, c, 0
 };
-
-static void _setGPUParam(VulkanBuffer* paramBuffer, const Tensor* inputShape, Tensor* outputShape, bool imageLayout) {
-    auto data = reinterpret_cast<ConcatParam*>(paramBuffer->map());
-    ::memset(data, 0, sizeof(ConcatParam));
-    data->inImageSize[0]  = inputShape->width();
-    data->inImageSize[1]  = inputShape->height();
-    data->inImageSize[2]  = UP_DIV(inputShape->channel(), 4);
-    data->inImageSize[3]  = inputShape->batch();
-    data->outImageSize[0] = outputShape->width();
-
-    paramBuffer->unmap();
-}
 
 VulkanConcat::VulkanConcat(const Op* op, Backend* bn) : VulkanBasicExecution(bn) {
     auto axis  = op->main_as_Axis()->axis();
@@ -37,12 +25,6 @@ VulkanConcat::VulkanConcat(const Op* op, Backend* bn) : VulkanBasicExecution(bn)
 ErrorCode VulkanConcat::onEncode(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
                                  const VulkanCommandPool::Buffer* cmdBuffer) {
     auto output = outputs[0];
-
-    if (TensorUtils::getDescribe(output)->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
-        MNN_PRINT("Vulkan Concat NOT SUPPORT for Buffer Layout Now!\n");
-        return NOT_SUPPORT;
-    }
-
     int axis = mAxis;
     if (0 > axis) {
         axis = output->dimensions() + axis;
@@ -147,7 +129,6 @@ ErrorCode VulkanConcatBufferImpl::encodeBufferImpl(const std::vector<Tensor*>& i
     mTempOutputTensor = std::make_shared<Tensor>(4);
     TensorUtils::copyShape(output, mTempOutputTensor.get());
     TensorUtils::getDescribe(mTempOutputTensor.get())->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-    mTempOutputTensor->buffer().dim[1].flags                           = 0;
     mVkbackend->onAcquireBuffer(mTempOutputTensor.get(), Backend::DYNAMIC);
     // set temp-input tensors layout and acquire memory for temp-input tensors
     mTempInputTensors.clear();
@@ -155,7 +136,6 @@ ErrorCode VulkanConcatBufferImpl::encodeBufferImpl(const std::vector<Tensor*>& i
         auto inputTemp = std::make_shared<Tensor>();
         TensorUtils::copyShape(inputs[i], inputTemp.get());
         TensorUtils::getDescribe(inputTemp.get())->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-        inputTemp->buffer().dim[1].flags                           = 0;
         mTempInputTensors.push_back(inputTemp);
         mVkbackend->onAcquireBuffer(inputTemp.get(), Backend::DYNAMIC);
     }
@@ -247,8 +227,13 @@ ErrorCode VulkanConcatBufferImpl::encodeBufferImpl(const std::vector<Tensor*>& i
 
 class VulkanConcatCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op,
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op,
                                 Backend* backend) const override {
+        if (TensorUtils::getDescribe(outputs[0])->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
+            MNN_PRINT("Vulkan Concat NOT SUPPORT for Buffer Layout Now!\n");
+            return nullptr;
+        }
+
         return new VulkanConcat(op, backend);
     }
 };

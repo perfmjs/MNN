@@ -6,10 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUSlice.hpp"
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
-#include "Macro.h"
+#include "backend/cpu/CPUSlice.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 using namespace std;
 
@@ -116,7 +117,6 @@ static int _sliceChannel(const Tensor* inputTensor, const vector<Tensor*>& outpu
             currentPositionZ += outputZ;
         }
     }
-
     return 0;
 }
 
@@ -126,13 +126,9 @@ CPUSlice::CPUSlice(Backend* b, int axis) : MNN::Execution(b) {
 
 ErrorCode CPUSlice::onResize(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
     MNN_ASSERT(1 == inputs.size());
-    MNN_ASSERT(outputs.size() >= 2);
     auto input              = inputs[0];
-    const auto tensorFormat = input->getDimensionType();
     mTempInput.reset();
-    if (Tensor::CAFFE == tensorFormat) {
-        // TODO Support other flag
-        MNN_ASSERT(inputs[0]->buffer().dim[1].flags == MNN::Tensor::REORDER_4);
+    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
         if (mAxis == 1) {
             bool useSlowMethod = false;
             // Last one need not be 4 aligned
@@ -158,9 +154,8 @@ ErrorCode CPUSlice::onResize(const std::vector<Tensor*>& inputs, const std::vect
 
 ErrorCode CPUSlice::onExecute(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
     auto input = inputs[0];
-    const auto tensorFormat = input->getDimensionType();
-    if (Tensor::CAFFE == tensorFormat) {
-        MNN_ASSERT(inputs[0]->buffer().dim[1].flags == MNN::Tensor::REORDER_4);
+    const auto tensorFormat = TensorUtils::getDescribe(input)->dimensionFormat;
+    if (MNN_DATA_FORMAT_NC4HW4 == tensorFormat) {
         if (mAxis == 1) {
             _sliceChannel(inputs[0], outputs, mTempInput.get());
             return NO_ERROR;

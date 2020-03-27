@@ -6,16 +6,14 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUTranspose.hpp"
-#include "CPUBackend.hpp"
-#include "Macro.h"
+#include "backend/cpu/CPUTranspose.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 
-template <typename T>
-CPUTranspose<T>::CPUTranspose(Backend* backend, const Op* op) : Execution(backend) {
-    auto OpParam = op->main_as_Transpose();
-    permDateType = OpParam->Tperm();
+CPUTranspose::CPUTranspose(Backend* backend, DataType dataType) : Execution(backend) {
+    permDateType = dataType;
 }
 
 inline bool NonSingletonDimensionsAlign(const Tensor* input, const std::vector<int32_t>& permutation) {
@@ -31,8 +29,7 @@ inline bool NonSingletonDimensionsAlign(const Tensor* input, const std::vector<i
     }
     return true;
 }
-template <typename T>
-ErrorCode CPUTranspose<T>::onExecute(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
+ErrorCode CPUTranspose::onExecute(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
     const Tensor* input = inputs[0];
     const Tensor* perm  = inputs[1];
     auto output         = outputs[0];
@@ -40,16 +37,8 @@ ErrorCode CPUTranspose<T>::onExecute(const std::vector<Tensor*>& inputs, const s
     MNN_ASSERT(dims == perm->buffer().dim[0].extent);
 
     std::vector<int32_t> permutation;
-    if (permDateType == DataType_DT_INT32) {
-        for (int i = 0; i < perm->buffer().dim[0].extent; i++) {
-            permutation.push_back(perm->host<int32_t>()[i]);
-        }
-    } else if (permDateType == DataType_DT_INT64) {
-        for (int i = 0; i < perm->buffer().dim[0].extent; i++) {
-            permutation.push_back(static_cast<int32_t>(perm->host<int64_t>()[i]));
-        }
-    } else {
-        MNN_ASSERT(false);
+    for (int i = 0; i < perm->buffer().dim[0].extent; i++) {
+        permutation.push_back(perm->host<int32_t>()[i]);
     }
 
     std::vector<int32_t> shape;
@@ -73,8 +62,8 @@ ErrorCode CPUTranspose<T>::onExecute(const std::vector<Tensor*>& inputs, const s
         MNN_ASSERT(bits[i]);
     }
 
-    const auto src = input->host<T>();
-    T* dst         = output->host<T>();
+    const auto src = input->host<float>();
+    float* dst         = output->host<float>();
 
     if ((dims <= 1 || isIdentity)) {
         memcpy(dst, src, input->size());
@@ -183,7 +172,7 @@ class CPUTransposeeCreator : public CPUBackend::Creator {
 public:
     virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
                                 const MNN::Op* op, Backend* backend) const {
-        return new CPUTranspose<float>(backend, op);
+        return new CPUTranspose(backend, op->main_as_Transpose()->Tperm());
     }
 };
 

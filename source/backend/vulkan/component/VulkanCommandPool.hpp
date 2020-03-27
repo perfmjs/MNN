@@ -9,9 +9,9 @@
 #ifndef VulkanCommandPool_hpp
 #define VulkanCommandPool_hpp
 
-#include "NonCopyable.hpp"
-#include "VulkanDevice.hpp"
-#include "vulkan_wrapper.h"
+#include "core/NonCopyable.hpp"
+#include "backend/vulkan/component/VulkanDevice.hpp"
+#include "backend/vulkan/vulkan/vulkan_wrapper.h"
 namespace MNN {
 class VulkanCommandPool : public NonCopyable {
 public:
@@ -38,7 +38,7 @@ public:
         const VulkanDevice& mDevice;
     };
 
-    const VulkanCommandPool::Buffer* allocBuffer() const;
+    VulkanCommandPool::Buffer* allocBuffer() const;
 
     VkCommandPool pool() const {
         return mPool;

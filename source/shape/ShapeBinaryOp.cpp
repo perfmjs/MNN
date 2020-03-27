@@ -6,79 +6,108 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include <set>
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
-//#define FORCE_SAME_SHAPE
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include <vector>
 namespace MNN {
 class BinaryOpComputer : public SizeComputer {
 public:
-    virtual bool onComputeSize(const MNN::Op* op, const std::vector<Tensor*>& inputs,
+    static bool outputBool(int operation) {
+        if (operation == BinaryOpOperation_GREATER_EQUAL) {
+            return true;
+        }
+        if (operation == BinaryOpOperation_GREATER) {
+            return true;
+        }
+        if (operation == BinaryOpOperation_LESS) {
+            return true;
+        }
+        if (operation == BinaryOpOperation_LESS_EQUAL) {
+            return true;
+        }
+        if (operation == BinaryOpOperation_EQUAL) {
+            return true;
+        }
+        return false;
+    }
+    virtual bool onComputeSize(const Op* op, const std::vector<Tensor*>& inputs,
                                const std::vector<Tensor*>& outputs) const override {
         MNN_ASSERT(2 == inputs.size());
         MNN_ASSERT(1 == outputs.size());
-        static std::set<int> supportedTypes{MNN::BinaryOpOperation_GREATER, MNN::BinaryOpOperation_GREATER_EQUAL,
-            MNN::BinaryOpOperation_LESS};
-        
-        auto &input0 = inputs[0]->buffer(), &input1 = inputs[1]->buffer(), &output = outputs[0]->buffer();
+        // set output type & format
+        auto input0 = inputs[0], input1 = inputs[1], output = outputs[0];
+        auto &buffer = output->buffer();
         const auto opType = op->main_as_BinaryOp()->opType();
-        if (supportedTypes.find(opType) != supportedTypes.end()) {
-            output.type = halide_type_of<int32_t>();
+        if (outputBool(opType)) {
+            buffer.type = halide_type_of<int32_t>();
         } else {
-            output.type = input0.type;
+            buffer.type = input0->getType();
+        }
+        if (input0->getType().code != input1->getType().code) {
+            MNN_PRINT("Error for binary op: input0's type != input1's type\n");
+            return false;
+        }
+        if (input0->dimensions() < input1->dimensions()) {
+            auto temp = input0;
+            input0 = input1;
+            input1 = temp;
+        }
+        TensorUtils::getDescribe(output)->dimensionFormat = TensorUtils::getDescribe(input0)->dimensionFormat;
+
+        // if one scalar input -> just copy the other
+        if (input1->dimensions() == 0) {
+            TensorUtils::copyShape(input0, output);
+            return true;
         }
 
-        if (input0.dimensions == 0) {
-            ::memcpy(output.dim, input1.dim, input1.dimensions * sizeof(halide_dimension_t));
-            output.dimensions = input1.dimensions;
-        } else if (input1.dimensions == 0) {
-            ::memcpy(output.dim, input0.dim, input0.dimensions * sizeof(halide_dimension_t));
-            output.dimensions = input0.dimensions;
-        } else { // no scalar input
-#ifdef FORCE_SAME_SHAPE
-            bool sameShape = true;
-            for (int i = 0; i < inputs[0]->dimensions(); ++i) {
-                if (inputs[0]->length(i) != inputs[1]->length(i)) {
+        // else if inputs shape equals -> just copy any one
+        bool sameShape = true;
+        if (input0->dimensions() == input1->dimensions()) {
+            for (int i = 0; i < input0->buffer().dimensions; i++) {
+                if (input0->buffer().dim[i].extent != input1->buffer().dim[i].extent) {
                     sameShape = false;
                     break;
                 }
             }
-#else
-            bool sameShape = inputs[0]->elementSize() == inputs[1]->elementSize();
-#endif
-            if (sameShape) {
-                ::memcpy(output.dim, input0.dim, input0.dimensions * sizeof(halide_dimension_t));
-                output.dimensions = input0.dimensions;
-            } else { // not the same shape, use broadcast
-                const int maxDimensions = std::max(input0.dimensions, input1.dimensions);
-
-                std::vector<int> dims0(maxDimensions, 1), dims1(maxDimensions, 1);
-                for (int i = input0.dimensions - 1, j = maxDimensions - 1; i >= 0; i--, j--) {
-                    dims0[j] = input0.dim[i].extent;
-                }
-                for (int i = input1.dimensions - 1, j = maxDimensions - 1; i >= 0; i--, j--) {
-                    dims1[j] = input1.dim[i].extent;
-                }
-                bool supportBroadcast = true;
-                for (int i = 0; i < maxDimensions; i++) {
-                    if ((dims0[i] != dims1[i]) && !(dims0[i] == 1 || dims1[i] == 1)) {
-                        supportBroadcast = false;
-                        break;
-                    }
-                }
-                if (supportBroadcast) {
-                    for (int i = 0; i < maxDimensions; i++) {
-                        output.dim[i].extent = std::max(dims0[i], dims1[i]);
-                        output.dim[i].flags  = 0;
-                    }
-                    output.dimensions = maxDimensions;
-                } else {
-                    return false;
-                }
+        }
+        else {
+            sameShape = false;
+        }
+        if (sameShape) {
+            TensorUtils::copyShape(input0, output);
+            return true;
+        }
+        
+        // else if broadcast NOT supported -> failed
+        const int maxDimensions = input0->dimensions();
+        const int diffDimension = input0->dimensions() - input1->dimensions();
+        
+        std::vector<int> outputDims(maxDimensions);
+        for (int i = 0; i < maxDimensions; i++) {
+            outputDims[i] = input0->buffer().dim[i].extent;
+        }
+        for (int i = diffDimension; i < maxDimensions; i++) {
+            const int input1Index = i - diffDimension;
+            int dim1 = input1->buffer().dim[input1Index].extent;
+            if (dim1 != outputDims[i] && (dim1 != 1 && outputDims[i] != 1)) {
+                MNN_PRINT("Don't support broadcast for binaryOp, i0=%d, i1=%d\n", outputDims[i], dim1);
+                return false;
+            }
+            if (dim1 == outputDims[i]) {
+                continue;
+            }
+            if (dim1 != outputDims[i] && (dim1 == 1 || outputDims[i] == 1)) {
+                outputDims[i] = outputDims[i] * dim1;
+            } else {
+                MNN_PRINT("Error, the logic flow should never get here");
+                return false;
             }
         }
-        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+
+        buffer.dimensions = maxDimensions;
+        for (int i = 0; i < maxDimensions; i++) {
+            buffer.dim[i].extent = outputDims[i];
+        }
 
         return true;
     }

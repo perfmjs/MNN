@@ -34,12 +34,18 @@ int main(int argc, const char** argv) {
         for (int i = 0; i < netT->oplists.size(); ++i) {
             auto type     = netT->oplists[i]->main.type;
             auto& opParam = netT->oplists[i];
-            if (type == MNN::OpParameter::OpParameter_Blob) {
+            if (type == MNN::OpParameter::OpParameter_Convolution2D) {
+                auto param = opParam->main.AsConvolution2D();
+                param->weight.clear();
+                param->bias.clear();
+                if (param->symmetricQuan) {
+                    param->symmetricQuan->weight.clear();
+                }
+            } else if (type == MNN::OpParameter::OpParameter_Blob) {
                 auto blobT = opParam->main.AsBlob();
                 blobT->float32s.clear();
                 blobT->int8s.clear();
-            }
-            else if (type == MNN::OpParameter::OpParameter_Convolution2D) {
+            } else if (type == MNN::OpParameter::OpParameter_Convolution2D) {
                 opParam->main.AsConvolution2D()->weight.clear();
                 opParam->main.AsConvolution2D()->bias.clear();
             } else if (type == MNN::OpParameter::OpParameter_MatMul) {
@@ -47,6 +53,20 @@ int main(int argc, const char** argv) {
                 opParam->main.AsMatMul()->bias.clear();
             } else if (type == MNN::OpParameter::OpParameter_PRelu) {
                 opParam->main.AsPRelu()->slope.clear();
+            } else if (type == MNN::OpParameter::OpParameter_Extra) {
+                auto extra = opParam->main.AsExtra();
+                extra->info.clear();
+            } else if(type == MNN::OpParameter::OpParameter_LSTM){
+                auto param = opParam->main.AsLSTM();
+                if (param->weightH) {
+                    param->weightH->float32s.clear();
+                }
+                if (param->weightI) {
+                    param->weightI->float32s.clear();
+                }
+                if (param->bias) {
+                    param->bias->float32s.clear();
+                }
             }
         }
         flatbuffers::FlatBufferBuilder newBuilder(1024);

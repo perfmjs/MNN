@@ -9,13 +9,13 @@
 #ifndef CPUPack_hpp
 #define CPUPack_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 #include "Type_generated.h"
 
 namespace MNN {
 class CPUPack : public Execution {
 public:
-    CPUPack(Backend *backend, const Op *op, DataType type, int axis);
+    CPUPack(Backend *backend, int axis);
     virtual ~CPUPack() = default;
     virtual ErrorCode onExecute(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) override;
 
@@ -23,7 +23,6 @@ public:
     ErrorCode MNNPackLayerForward(const std::vector<MNN::Tensor *> &inputs, const std::vector<MNN::Tensor *> &outputs);
 
 private:
-    DataType mDataType;
     int mAxis;
 };
 } // namespace MNN

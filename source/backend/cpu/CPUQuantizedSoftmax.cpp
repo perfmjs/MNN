@@ -5,15 +5,15 @@
 //  Created by MNN on 2018/09/29.
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
-
+#ifdef MNN_SUPPORT_TFLITE_QUAN
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
-#include "CPUQuantizedSoftmax.hpp"
-#include "CPUBackend.hpp"
-#include "CPUFixedPoint.hpp"
-#include "CPUQuantizationUtils.hpp"
-#include "Macro.h"
+#include "backend/cpu/CPUQuantizedSoftmax.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/CPUFixedPoint.hpp"
+#include "backend/cpu/CPUQuantizationUtils.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 
@@ -33,12 +33,12 @@ ErrorCode CPUQuantizedSoftmax<T>::onResize(const std::vector<Tensor*>& inputs, c
     float scale = mInputScale;
     PreprocessSoftmaxScaling(beta, scale, kScaledDiffIntegerBits, &mInputMultiplier, &mInputLeftShift);
     mDiffMin = -1.0 * CalculateInputRadius(kScaledDiffIntegerBits, mInputLeftShift);
-    
+
     Tensor* input       = inputs[0];
     Tensor* output      = outputs[0];
-    
+
     MNN_ASSERT(2 == input->buffer().dimensions || 4 == input->buffer().dimensions);
-    
+
     mInputDims.clear();
     mOutputDims.clear();
     if (4 == input->buffer().dimensions) {
@@ -53,13 +53,13 @@ ErrorCode CPUQuantizedSoftmax<T>::onResize(const std::vector<Tensor*>& inputs, c
         mInputDims.push_back(1);
         mInputDims.push_back(1);
         mInputDims.push_back(input->buffer().dim[1].extent);
-        
+
         mOutputDims.push_back(input->buffer().dim[0].extent);
         mOutputDims.push_back(1);
         mOutputDims.push_back(1);
         mOutputDims.push_back(input->buffer().dim[1].extent);
     }
-    
+
     return NO_ERROR;
 }
 
@@ -162,3 +162,4 @@ public:
 };
 REGISTER_CPU_OP_CREATOR(CPUQuantizedSoftmaxCreator, OpType_QuantizedSoftmax);
 } // namespace MNN
+#endif

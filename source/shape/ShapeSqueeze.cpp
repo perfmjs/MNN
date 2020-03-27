@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 class UnSqueezeSizeComputer : public SizeComputer {
@@ -17,8 +17,12 @@ class UnSqueezeSizeComputer : public SizeComputer {
         MNN_ASSERT(1 == inputs.size());
         MNN_ASSERT(1 == outputs.size());
 
-        const int* squeezeDim    = op->main_as_SqueezeParam()->squeezeDims()->data();
-        const int squeezeDimSize = op->main_as_SqueezeParam()->squeezeDims()->size();
+        const int* squeezeDim = nullptr;
+        int squeezeDimSize    = 0;
+        if (nullptr != op->main_as_SqueezeParam()->squeezeDims()) {
+            squeezeDim     = op->main_as_SqueezeParam()->squeezeDims()->data();
+            squeezeDimSize = op->main_as_SqueezeParam()->squeezeDims()->size();
+        }
 
         std::set<int> dimSet;
         for (int i = 0; i < squeezeDimSize; i++) {
@@ -32,9 +36,9 @@ class UnSqueezeSizeComputer : public SizeComputer {
         int oDim      = 0;
         for (int i = 0; i < ob.dimensions; i++) {
             ob.dim[i].extent = 1;
-            ob.dim[i].flags = 0;
             if (dimSet.find(i) == dimSet.end()) {
                 ob.dim[i].extent = ib.dim[oDim].extent;
+                oDim++;
             }
         }
         ob.type                                               = inputs[0]->buffer().type;
@@ -49,8 +53,12 @@ class SqueezeSizeComputer : public SizeComputer {
         MNN_ASSERT(1 == inputs.size());
         MNN_ASSERT(1 == outputs.size());
 
-        const int* squeezeDim    = op->main_as_SqueezeParam()->squeezeDims()->data();
-        const int squeezeDimSize = op->main_as_SqueezeParam()->squeezeDims()->size();
+        const int* squeezeDim = nullptr;
+        int squeezeDimSize    = 0;
+        if (nullptr != op->main_as_SqueezeParam()->squeezeDims()) {
+            squeezeDim     = op->main_as_SqueezeParam()->squeezeDims()->data();
+            squeezeDimSize = op->main_as_SqueezeParam()->squeezeDims()->size();
+        }
 
         std::set<int> dimSet;
         for (int i = 0; i < squeezeDimSize; i++) {
@@ -60,6 +68,15 @@ class SqueezeSizeComputer : public SizeComputer {
         auto& ob = outputs[0]->buffer();
         auto ib  = inputs[0]->buffer();
 
+        if (squeezeDimSize == 0) {
+            for (int i = 0; i < ib.dimensions; ++i) {
+                if (ib.dim[i].extent == 1) {
+                    dimSet.insert(i);
+                    ++squeezeDimSize;
+                }
+            }
+        }
+
         MNN_ASSERT(squeezeDimSize < ib.dimensions);
 
         ob.dimensions = ib.dimensions - squeezeDimSize;
@@ -67,13 +84,11 @@ class SqueezeSizeComputer : public SizeComputer {
         for (int i = 0; i < ib.dimensions; i++) {
             if (dimSet.find(i) == dimSet.end()) {
                 ob.dim[oDim].extent = ib.dim[i].extent;
-                ob.dim[oDim].flags = 0;
                 oDim++;
             }
         }
         ob.type                                               = inputs[0]->buffer().type;
         TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
-
         return true;
     }
 };

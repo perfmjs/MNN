@@ -1,4 +1,4 @@
-//
+                                                                                                                                                                                                                                                        //
 //  ImageFloatBlitter.cpp
 //  MNN
 //
@@ -6,7 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ImageFloatBlitter.hpp"
+#include "cv/ImageFloatBlitter.hpp"
+#include "Tensor_generated.h"
 extern "C" {
 void MNNBlitC1ToFloatRGBA(const unsigned char* source, float* dest, const float* mean, const float* normal,
                           size_t count);
@@ -15,7 +16,7 @@ void MNNBlitC3ToFloatRGBA(const unsigned char* source, float* dest, const float*
 void MNNBlitC4ToFloatC4(const unsigned char* source, float* dest, const float* mean, const float* normal, size_t count);
 }
 
-#include "Macro.h"
+#include "core/Macro.h"
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
 #endif
@@ -59,9 +60,7 @@ static void _blitC1ToFloatC1(const unsigned char* source, float* dest, const flo
     if (left == 0) {
         return;
     }
-    dest   = dest + left;
-    source = source + left;
-    for (int i = left; i > 0; --i, --dest, --source) {
+    for (int i = 0; i < left; ++i, ++dest, ++source) {
         *dest = normal[0] * (*source - mean[0]);
     }
 #else
@@ -204,8 +203,8 @@ void MNNBlitC3ToFloatRGBA(const unsigned char* source, float* dest, const float*
 }
 #endif
 
-ImageFloatBlitter::BLIT_FLOAT ImageFloatBlitter::choose(ImageFormat format, MNN_DATA_FORMAT dimensionformat) {
-    if (dimensionformat == MNN_DATA_FORMAT_NC4HW4) {
+ImageFloatBlitter::BLIT_FLOAT ImageFloatBlitter::choose(ImageFormat format, int dstBpp) {
+    if (4 == dstBpp) {
         switch (format) {
             case GRAY:
                 return MNNBlitC1ToFloatRGBA;

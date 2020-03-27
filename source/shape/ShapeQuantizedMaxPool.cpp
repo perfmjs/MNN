@@ -5,10 +5,10 @@
 //  Created by MNN on 2019/01/10.
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
-
+#ifdef MNN_SUPPORT_TFLITE_QUAN
 #include <math.h>
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 class QuantizedMaxPoolComputer : public SizeComputer {
@@ -48,21 +48,13 @@ class QuantizedMaxPoolComputer : public SizeComputer {
         outputBuffer.dim[1].extent = output_height;
         outputBuffer.dim[2].extent = output_width;
         outputBuffer.dim[3].extent = input->buffer().dim[3].extent;
+        outputs[0]->setType(DataType_DT_UINT8);
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
 
-        if (3 == inputs.size()) {
-            auto output_min          = outputs[1]->buffer();
-            output_min.dimensions    = 0;
-            output_min.dim[0].extent = output_min.dim[1].extent = output_min.dim[2].extent = output_min.dim[3].extent =
-                1;
-
-            auto output_max          = outputs[2]->buffer();
-            output_max.dimensions    = 0;
-            output_max.dim[0].extent = output_max.dim[1].extent = output_max.dim[2].extent = output_max.dim[3].extent =
-                1;
-        }
         return true;
     }
 };
 
 REGISTER_SHAPE(QuantizedMaxPoolComputer, OpType_QuantizedMaxPool);
 } // namespace MNN
+#endif

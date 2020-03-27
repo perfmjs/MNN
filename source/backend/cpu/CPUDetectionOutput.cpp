@@ -5,13 +5,19 @@
 //  Created by MNN on 2018/07/17.
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
+/* When use MSVC compile the file on x86 Release, a compiler internal error will be report because of MSVC's bug.
+   reference link: https://developercommunity.visualstudio.com/comments/535612/view.html */
+#if defined(_MSC_VER) && defined(_M_IX86) && !defined(_DEBUG)
+#pragma optimize("", off)
+#endif
 
-#include "CPUDetectionOutput.hpp"
+#include "backend/cpu/CPUDetectionOutput.hpp"
 #include <math.h>
 #include <list>
-#include "AutoTime.hpp"
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
+#include <MNN/AutoTime.hpp>
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
@@ -23,7 +29,11 @@ CPUDetectionOutput::CPUDetectionOutput(Backend *backend, int classCount, float n
       mKeepTopK(keepTopK),
       mConfidenceThreshold(confidenceThreshold),
       mObjectnessScoreThreshold(objectnessScore) {
-    // nothing to do
+    TensorUtils::getDescribe(&mLocation)->dimensionFormat      = MNN_DATA_FORMAT_NCHW;
+    TensorUtils::getDescribe(&mConfidence)->dimensionFormat    = MNN_DATA_FORMAT_NCHW;
+    TensorUtils::getDescribe(&mPriorbox)->dimensionFormat      = MNN_DATA_FORMAT_NCHW;
+    TensorUtils::getDescribe(&mArmLocation)->dimensionFormat   = MNN_DATA_FORMAT_NCHW;
+    TensorUtils::getDescribe(&mArmConfidence)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
 }
 
 using score_box_t = std::tuple<float, float, float, float, int, float>;
@@ -81,27 +91,28 @@ static void pickBoxes(const std::vector<score_box_t> &boxes, std::list<long> &pi
 }
 
 ErrorCode CPUDetectionOutput::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
+    auto &location = inputs[0];
+    auto &priorbox = inputs[2];
+    if (location->channel() != priorbox->height()) {
+        MNN_ERROR("Error for CPUDetection output, location and pribox not match\n");
+        return NOT_SUPPORT;
+    }
     // location transform space
-    auto &location = inputs[0]->buffer();
-    memcpy(mLocation.buffer().dim, location.dim, sizeof(halide_dimension_t) * location.dimensions);
+    TensorUtils::copyShape(inputs[0], &mLocation, false);
     backend()->onAcquireBuffer(&mLocation, Backend::DYNAMIC);
 
     // confidence transform space
-    auto &confidence = inputs[1]->buffer();
-    memcpy(mConfidence.buffer().dim, confidence.dim, sizeof(halide_dimension_t) * confidence.dimensions);
+    TensorUtils::copyShape(inputs[1], &mConfidence, false);
     backend()->onAcquireBuffer(&mConfidence, Backend::DYNAMIC);
 
     // priorbox transform space
-    auto &priorbox = inputs[2]->buffer();
-    memcpy(mPriorbox.buffer().dim, priorbox.dim, sizeof(halide_dimension_t) * priorbox.dimensions);
+    TensorUtils::copyShape(inputs[2], &mPriorbox, false);
     backend()->onAcquireBuffer(&mPriorbox, Backend::DYNAMIC);
 
     // refine
     if (inputs.size() >= 5) {
-        auto &armconfidence = inputs[3]->buffer();
-        memcpy(mArmConfidence.buffer().dim, armconfidence.dim, sizeof(halide_dimension_t) * armconfidence.dimensions);
-        auto &armlocation = inputs[4]->buffer();
-        memcpy(mArmLocation.buffer().dim, armlocation.dim, sizeof(halide_dimension_t) * armlocation.dimensions);
+        TensorUtils::copyShape(inputs[3], &mArmConfidence, false);
+        TensorUtils::copyShape(inputs[4], &mArmLocation, false);
 
         backend()->onAcquireBuffer(&mArmConfidence, Backend::DYNAMIC);
         backend()->onAcquireBuffer(&mArmLocation, Backend::DYNAMIC);

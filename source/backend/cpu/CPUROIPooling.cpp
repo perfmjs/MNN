@@ -6,13 +6,13 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUROIPooling.hpp"
+#include "backend/cpu/CPUROIPooling.hpp"
 #include <float.h>
 #include <math.h>
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
@@ -29,7 +29,7 @@ ErrorCode CPUROIPooling::onResize(const std::vector<Tensor *> &inputs, const std
     // roi transform space
     auto &roi = inputs[1]->buffer();
     memcpy(mROI.buffer().dim, roi.dim, sizeof(halide_dimension_t) * roi.dimensions);
-    mROI.buffer().dim[1].flags = 0;
+    TensorUtils::getDescribe(&mROI)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
     TensorUtils::setLinearLayout(&mROI);
     backend()->onAcquireBuffer(&mROI, Backend::DYNAMIC);
 

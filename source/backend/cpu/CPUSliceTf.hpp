@@ -9,13 +9,12 @@
 #ifndef CPUSliceTf_hpp
 #define CPUSliceTf_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 
 namespace MNN {
-template <typename T>
 class CPUSliceTf : public Execution {
 public:
-    CPUSliceTf(Backend *b, const MNN::Op *op);
+    CPUSliceTf(Backend *b);
     virtual ~CPUSliceTf() = default;
     virtual ErrorCode onExecute(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) override;
 };

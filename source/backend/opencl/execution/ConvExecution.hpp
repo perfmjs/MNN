@@ -9,14 +9,14 @@
 #ifndef ConvExecution_hpp
 #define ConvExecution_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 
 #include <array>
 #include <functional>
 #include <memory>
 #include <vector>
-#include "core/OpenCLBackend.hpp"
-#include "core/OpenCLRunningUtils.hpp"
+#include "backend/opencl/core/OpenCLBackend.hpp"
+#include "backend/opencl/core/OpenCLRunningUtils.hpp"
 namespace MNN {
 namespace OpenCL {
 
@@ -40,6 +40,7 @@ public:
     static std::shared_ptr<Tensor> getBias(OpenCLBackend *backend, const Convolution2D *conv);
 
     std::vector<uint32_t> conv2d1x1LocalWS(std::vector<uint32_t> &gws, const uint32_t maxWorkGroupSize);
+    std::vector<uint32_t> conv2d1x1LocalWSOpt(std::vector<uint32_t> &gws, const uint32_t maxWorkGroupSize);
 
     std::vector<uint32_t> conv2dGeneralLocalWS(const std::vector<uint32_t> &gws, const uint32_t kernelSize,
                                                const uint32_t maxWorkGroupSize);
@@ -56,6 +57,10 @@ private:
     uint32_t mMaxWorkGroupSize;
     bool mIsTurn = false;
     OpenCLBackend *mOpenCLBackend;
+    bool mConv1x1Opt{false};
+    bool mUseLocalMem{false};
+    std::shared_ptr<cl::Buffer> mKernelBuffer;
+    std::shared_ptr<cl::Buffer> mBiasBuffer;
 };
 
 } // namespace OpenCL

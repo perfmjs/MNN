@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
@@ -47,8 +47,7 @@ class MatMulSizeComputer : public SizeComputer {
         output->buffer().type = inputs[0]->buffer().type;
         output->setLength(0, h0);
         output->setLength(1, w1);
-        TensorUtils::setLinearLayout(output);
-
+        TensorUtils::getDescribe(output)->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
         return true;
     }
 };

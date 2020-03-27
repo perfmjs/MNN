@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "WingoradGenerater.hpp"
 #include <math.h>
-#include "AutoStorage.h"
-#include "Macro.h"
+#include <string.h>
+#include "math/WingoradGenerater.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 namespace Math {
@@ -168,8 +168,6 @@ WinogradGenerater::WinogradGenerater(int computeUnit, int kernelSize, float inte
     }
     {
         auto B = computeB(a, alpha);
-        Matrix::transpose(mB.get(), B.get());
-        Matrix::transpose(B.get(), mB.get());
         mB = B;
     }
 }

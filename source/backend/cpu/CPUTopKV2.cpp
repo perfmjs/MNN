@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUTopKV2.hpp"
-#include "CPUBackend.hpp"
-#include "Macro.h"
+#include "backend/cpu/CPUTopKV2.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 
@@ -85,7 +85,7 @@ void findTopK(int32_t rowSize, int32_t numRows, const T* data, int32_t k, int32_
     }
 }
 
-CPUTopKV2::CPUTopKV2(Backend* b, const TopKV2* TopKV2Param) : MNN::Execution(b), mTopKV2Param(TopKV2Param) {
+CPUTopKV2::CPUTopKV2(Backend* b) : MNN::Execution(b) {
     // nothing to do
 }
 
@@ -95,17 +95,21 @@ ErrorCode CPUTopKV2::onExecute(const std::vector<Tensor*>& inputs, const std::ve
     auto outputData    = outputs[0];
     auto outputIndices = outputs[1];
 
-    auto dType               = mTopKV2Param->T();
     const int inputDimension = inputTensor->buffer().dimensions;
 
     const int rowSize = inputTensor->buffer().dim[inputDimension - 1].extent;
     MNN_ASSERT(k <= rowSize);
     const int numRows = inputTensor->elementSize() / rowSize;
-    if (MNN::DataType_DT_FLOAT == dType) {
+    if (halide_type_float == inputTensor->getType().code) {
         auto inputData   = inputTensor->host<float>();
         auto topkData    = outputData->host<float>();
         int* indicesData = outputIndices->host<int32_t>();
         findTopK<float>(rowSize, numRows, inputData, k, indicesData, topkData);
+    } else if(halide_type_int == inputTensor->getType().code && 32 == inputTensor->getType().bits) {
+        auto inputData   = inputTensor->host<int32_t>();
+        auto topkData    = outputData->host<int32_t>();
+        int* indicesData = outputIndices->host<int32_t>();
+        findTopK<int32_t>(rowSize, numRows, inputData, k, indicesData, topkData);
     } else {
         MNN_PRINT("TODO\n");
         MNN_ASSERT(false);
@@ -117,7 +121,7 @@ class CPUTopKV2Creator : public CPUBackend::Creator {
 public:
     virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
                                 const MNN::Op* op, Backend* backend) const override {
-        return new CPUTopKV2(backend, op->main_as_TopKV2());
+        return new CPUTopKV2(backend);
     }
 };
 

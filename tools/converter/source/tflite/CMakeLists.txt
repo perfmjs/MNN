@@ -1,17 +1,5 @@
-cmake_minimum_required(VERSION 3.0)
-
-project(tflite)
-
-set(CMAKE_CXX_STANDARD 11)
-
-
-set(TFLITE_SRC_PATH ${CMAKE_SOURCE_DIR}/source/tflite)
-
-include_directories(${CMAKE_SOURCE_DIR}/source/IR)
-include_directories(${CMAKE_SOURCE_DIR}/source/include)
-include_directories(${TFLITE_SRC_PATH}/schema)
-include_directories(${TFLITE_SRC_PATH})
-
-file(GLOB TFLITE_SRC ${TFLITE_SRC_PATH}/*)
-
-add_library(tflite SHARED ${TFLITE_SRC})
+file(GLOB TFLITE_SRC ${CMAKE_CURRENT_LIST_DIR}/*.cpp)
+add_library(MNNConverterTFL OBJECT ${TFLITE_SRC})
+target_include_directories(MNNConverterTFL PRIVATE ${CMAKE_CURRENT_LIST_DIR}/schema/)
+list(APPEND MNN_CONVERTER_BACKENDS_OBJECTS $<TARGET_OBJECTS:MNNConverterTFL>)
+list(APPEND MNN_CONVERTER_BACKENDS_TARGETS MNNConverterTFL)

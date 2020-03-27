@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 
@@ -22,19 +22,6 @@ class SliceTfComputer : public SizeComputer {
         auto begin_tensor = inputs[1];
         auto size_tensor  = inputs[2];
 
-        std::shared_ptr<Tensor> realBeginTensor;
-        std::shared_ptr<Tensor> sizeTensor;
-
-        // copy data from device to host if needed
-        if (!begin_tensor->host<int32_t>() && begin_tensor->deviceId()) {
-            realBeginTensor.reset(Tensor::createHostTensorFromDevice(begin_tensor, true));
-            begin_tensor = realBeginTensor.get();
-        }
-        if (!size_tensor->host<int32_t>() && size_tensor->deviceId()) {
-            sizeTensor.reset(Tensor::createHostTensorFromDevice(size_tensor, true));
-            size_tensor = sizeTensor.get();
-        }
-
         MNN_ASSERT(begin_tensor->buffer().dimensions == 1);
         MNN_ASSERT(size_tensor->buffer().dimensions == 1);
         MNN_ASSERT(input->buffer().dimensions >= 1);
@@ -47,7 +34,7 @@ class SliceTfComputer : public SizeComputer {
         int dim                     = 0;
         for (int i = 0; i < input->buffer().dimensions; i++) {
             dim = size_tensor->host<int32_t>()[i];
-            if (size_tensor->host<int32_t>()[i] == -1) {
+            if (dim == -1 ) {
                 dim = input->buffer().dim[i].extent - begin_tensor->host<int32_t>()[i];
             }
             // size <= 0, this ouput is not useful, set the dimendsions 0
@@ -57,10 +44,12 @@ class SliceTfComputer : public SizeComputer {
             }
             output->buffer().dim[i].extent = dim;
         }
-
+        for (int i=0; i<outputs.size(); ++i) {
+            TensorUtils::getDescribe(outputs[i])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+        }
         return true;
     }
 };
 
-REGISTER_SHAPE(SliceTfComputer, OpType_SliceTf);
+REGISTER_SHAPE_INPUTS(SliceTfComputer, OpType_SliceTf, (std::vector<int>{1, 2}));
 } // namespace MNN

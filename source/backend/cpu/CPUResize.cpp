@@ -6,12 +6,12 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUResize.hpp"
+#include "backend/cpu/CPUResize.hpp"
 #include <math.h>
-#include "AutoStorage.h"
-#include "CPUBackend.hpp"
-#include "Concurrency.h"
-#include "Macro.h"
+#include "core/AutoStorage.h"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/Concurrency.h"
+#include "core/Macro.h"
 
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
@@ -73,7 +73,7 @@ static int CLAMP(int v, int min, int max) {
     return v;
 }
 
-void CPUResizeCubicC4(halide_buffer_t& input, halide_buffer_t& output) {
+void CPUResizeCommon::CPUResizeCubicC4(halide_buffer_t& input, halide_buffer_t& output) {
     const int batches      = input.dim[0].extent;
     const int inBatchSize  = input.dim[0].stride;
     const int outBatchSize = output.dim[0].stride;
@@ -164,9 +164,9 @@ void CPUResizeCubicC4(halide_buffer_t& input, halide_buffer_t& output) {
     }
 }
 
-void CPUResizeBilinearC4(halide_buffer_t& input, halide_buffer_t& output, const int* widthPosition,
-                         const float* widthFactor, const int* heightPosition, const float* heightFactor,
-                         float* lineBuffer, int threadNumber) {
+void CPUResizeCommon::CPUResizeBilinearC4(halide_buffer_t& input, halide_buffer_t& output, const int* widthPosition,
+                                          const float* widthFactor, const int* heightPosition,
+                                          const float* heightFactor, float* lineBuffer, int threadNumber) {
     const int batches         = input.dim[0].extent;
     const int inputBatchSize  = input.dim[0].stride;
     const int outputBatchSize = output.dim[0].stride;
@@ -236,7 +236,8 @@ void CPUResizeBilinearC4(halide_buffer_t& input, halide_buffer_t& output, const 
     }
 }
 
-void CPUReiseNearstneighborC4(halide_buffer_t& input, halide_buffer_t& output, float wScale, float hScale) {
+void CPUResizeCommon::CPUResizeNearestneighborC4(halide_buffer_t& input, halide_buffer_t& output, float wScale,
+                                               float hScale) {
     const int batches         = input.dim[0].extent;
     const int inputBatchSize  = input.dim[0].stride;
     const int outputBatchSize = output.dim[0].stride;
@@ -277,7 +278,7 @@ void CPUReiseNearstneighborC4(halide_buffer_t& input, halide_buffer_t& output, f
 }
 
 CPUResize::CPUResize(Backend* backend, float xScale, float yScale)
-    : Execution(backend), mXScale(xScale), mYScale(yScale) {
+    : CPUResizeCommon(backend), mXScale(xScale), mYScale(yScale) {
     // nothing to do
 }
 

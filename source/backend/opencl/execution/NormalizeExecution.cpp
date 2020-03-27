@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "execution/NormalizeExecution.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-#include "core/OpenCLBackend.hpp"
-#include "core/OpenCLRunningUtils.hpp"
+#include "backend/opencl/execution/NormalizeExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "backend/opencl/core/OpenCLBackend.hpp"
+#include "backend/opencl/core/OpenCLRunningUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -27,10 +27,15 @@ NormalizeExecution::NormalizeExecution(const std::vector<Tensor *> &inputs, cons
     const float *scaleData = mNormalizeParams->scale()->data();
     cl::Buffer scaleBuffer(mOpenCLBackend->getOpenCLRuntime()->context(), CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
                            UP_DIV(scaleSize, 4) * 4 * sizeof(float));
+    cl_int error;
     auto biasPtrCL = mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueMapBuffer(
-        scaleBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(scaleSize) * sizeof(float));
-    ::memset(biasPtrCL, 0, ALIGN_UP4(scaleSize) * sizeof(float));
-    ::memcpy(biasPtrCL, scaleData, scaleSize * sizeof(float));
+        scaleBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(scaleSize) * sizeof(float), nullptr, nullptr, &error);
+    if (nullptr != biasPtrCL && error == CL_SUCCESS){
+        ::memset(biasPtrCL, 0, ALIGN_UP4(scaleSize) * sizeof(float));
+        ::memcpy(biasPtrCL, scaleData, scaleSize * sizeof(float));
+    }else{
+        MNN_ERROR("Map error biasPtrCL == nullptr \n");
+    }
     mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(scaleBuffer, biasPtrCL);
 
     mScale.reset(Tensor::createDevice<float>({1, 1, 1, scaleSize}));

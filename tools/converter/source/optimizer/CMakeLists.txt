@@ -1,13 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
-
-project(optimizer)
-
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 11)
-
-include_directories(${CMAKE_SOURCE_DIR}/source/IR)
-include_directories(${CMAKE_SOURCE_DIR}/source/include)
-
-file(GLOB OPTIMIZER_SRC ${CMAKE_SOURCE_DIR}/source/optimizer/*)
-
-add_library(optimizer SHARED ${OPTIMIZER_SRC})
+file(GLOB_RECURSE OPTIMIZER_SRC ${CMAKE_CURRENT_LIST_DIR}/*.cpp)
+add_library(MNNConverterOpt OBJECT ${OPTIMIZER_SRC})
+list(APPEND MNN_CONVERTER_BACKENDS_OBJECTS $<TARGET_OBJECTS:MNNConverterOpt>)
+list(APPEND MNN_CONVERTER_BACKENDS_TARGETS MNNConverterOpt)

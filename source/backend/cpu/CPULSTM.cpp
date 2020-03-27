@@ -6,14 +6,14 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPULSTM.hpp"
+#include "backend/cpu/CPULSTM.hpp"
 #include <math.h>
-#include "CPUBackend.hpp"
-#include "BufferAllocator.hpp"
-#include "CommonOptFunction.h"
-#include "Concurrency.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/BufferAllocator.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Concurrency.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
@@ -45,7 +45,7 @@ static void copyWeightAlignUp4x4(float* dst, const float* src, int numUnits, int
             }
         }
         if (w < numFeatures) {
-            for (int h = 0, inputIndex = w, ww; h < numUnits; ++h, inputIndex += numUnits) {
+            for (int h = 0, inputIndex = w, ww; h < numUnits; ++h, inputIndex += numFeatures) {
                 for (ww = 0; ww < numFeatures - w; ++ww) {
                     dstData[outputIndex++] = srcData[inputIndex + ww];
                 }
@@ -56,9 +56,14 @@ static void copyWeightAlignUp4x4(float* dst, const float* src, int numUnits, int
         }
     }
 }
-    
+
 CPULSTM::CPULSTM(Backend *backend, const LSTM *LSTM) : Execution(backend), mLSTM(LSTM) {
-    // nothing to do
+    const int hiddenSize = mLSTM->outputCount();
+    int biasLength = 0;
+    if(mLSTM->bias()){
+        biasLength = mLSTM->bias()->float32s()->size();
+    }
+    mGateHaveBias = biasLength == 8 * hiddenSize;
 }
 
 CPULSTM::~CPULSTM() {
@@ -72,6 +77,7 @@ CPULSTM::~CPULSTM() {
 ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     auto &input = inputs[0];
     auto &output = outputs[0];
+    MNN_ASSERT(TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4);
     const int batch = input->buffer().dim[0].extent;
     const int timeSteps = input->buffer().dim[1].extent;
     const int numFeatures = input->buffer().dim[3].extent;
@@ -97,12 +103,11 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
             memset(dst + 4 * numFeatures, 0, remainBytes);
         }
     };
-    
+
     // cont transform space
     if (inputs.size() > 1) {
         auto &cont = inputs[1];
         TensorUtils::copyShape(cont, &mCont);
-        mCont.buffer().dim[1].flags = 0;
         success                     = success && backend()->onAcquireBuffer(&mCont, Backend::DYNAMIC);
     }
 
@@ -119,6 +124,7 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
     mGates.buffer().dim[0].extent = batch * ALIGN_UP4(timeSteps) * numUnits * 4;
     mGates.buffer().dimensions    = 1;
     success                       = success && backend()->onAcquireBuffer(&mGates, Backend::DYNAMIC);
+    memset(mGates.host<float>(), 0, mGates.size());
     //MNN_PRINT("%d, %d\n", batch * ALIGN_UP4(timeSteps) * numUnits * 4, mGates.elementSize());
     // cell space
     mCell.buffer().dim[0].extent = numUnits;
@@ -127,13 +133,20 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
     if (!success) {
         return OUT_OF_MEMORY;
     }
-    
+
     if (!mInit) {
         mInit       = true;
         auto devide = weightI && !weightH && weightSize == 4 * numUnits * (numFeatures + numUnits + 2);
         mWeightI.reset(Tensor::createDevice<float>(std::vector<int>{4, UP_DIV(numFeatures, 4), numUnits, 4}));
         mWeightH.reset(Tensor::createDevice<float>(std::vector<int>{numUnits * numUnits * 4}));
-        mBiasC.reset(Tensor::createDevice<float>(std::vector<int>{numUnits * 4}));
+        if(mLSTM->weightH()){
+            MNN_ASSERT(mLSTM->weightH()->float32s()->size() == mWeightH->elementSize());
+        }
+        int biasSize = numUnits * 4;
+        if(mGateHaveBias){
+            biasSize = numUnits * 8;
+        }
+        mBiasC.reset(Tensor::createDevice<float>(std::vector<int>{biasSize}));
         success = success && backend()->onAcquireBuffer(mWeightH.get(), Backend::STATIC);
         success = success && backend()->onAcquireBuffer(mWeightI.get(), Backend::STATIC);
         success = success && backend()->onAcquireBuffer(mBiasC.get(), Backend::STATIC);
@@ -168,15 +181,14 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
             ::memcpy(mWeightH->host<float>(), mLSTM->weightH()->float32s()->data(), mWeightH->size());
         }
     }
-    
+
     if (inputs.size() > 1) {
         backend()->onReleaseBuffer(&mCont, Backend::DYNAMIC);
     }
     backend()->onReleaseBuffer(&mOutput, Backend::DYNAMIC);
     backend()->onReleaseBuffer(&mCell, Backend::DYNAMIC);
-    
+
     const int maxDepth = 5;
-    const bool cacheB = false;
     BufferAllocator* memoryPool = ((CPUBackend *)backend())->getBufferAllocator();
     memoryPool->barrierBegin();
     std::shared_ptr<void> __a(nullptr, [memoryPool](void *) { memoryPool->barrierEnd(); });
@@ -187,13 +199,13 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
         mUnits[i].mTempGates.reset(Tensor::create<float>(std::vector<int>{batch * UP_DIV(timeSteps, 4), numUnits, 4}, gateData));
         mUnits[i].mTempInputVector = std::vector<Tensor*>{mUnits[i].mTempWeight.get(), &mInput};
         mUnits[i].mTempOutputVector = std::vector<Tensor*>{mUnits[i].mTempGates.get()};
-        mUnits[i].mStracssenComputor.reset(new StrassenMatrixComputor(backend(), maxDepth, cacheB));
+        mUnits[i].mStracssenComputor.reset(new StrassenMatrixComputor(backend(), false, maxDepth));
         mUnits[i].mStracssenComputor->onReset();
         memoryPool->beginGroup();
         std::shared_ptr<void> __b(nullptr, [memoryPool](void *) { memoryPool->endGroup(); });
         mUnits[i].mStracssenComputor->onEncode(mUnits[i].mTempInputVector, mUnits[i].mTempOutputVector);
     }
-    
+
     Tensor tempInternalTensor; // just for acquire memory efficiently
     tempInternalTensor.buffer().dim[0].extent = 4 * batch * ALIGN_UP4(timeSteps) * numUnits;
     tempInternalTensor.buffer().dimensions = 1;
@@ -203,23 +215,33 @@ ErrorCode CPULSTM::onResize(const std::vector<Tensor *> &inputs, const std::vect
     }
     float* tempData = tempInternalTensor.host<float>();
     backend()->onReleaseBuffer(&tempInternalTensor, Backend::DYNAMIC);
-    
-    mRetriveOutputFunction = [batch, timeSteps, numUnits, tempData](float* gateData) {
+
+    mRetriveOutputFunction = [batch, timeSteps, numUnits, tempData](float* gateData, const float* bias) {
         const int itemSize = batch * ALIGN_UP4(timeSteps) * numUnits;
         for (int i = 0; i < 4; ++i) {
             MNNUnpackC4(tempData + i * itemSize, gateData + i * itemSize, numUnits, batch * ALIGN_UP4(timeSteps));
         }
-        for (int i = 0, outputIndex = 0; i < itemSize; ++i, outputIndex += 4) {
-            gateData[outputIndex] = tempData[i];
-            gateData[outputIndex + 1] = tempData[i + itemSize];
-            gateData[outputIndex + 2] = tempData[i + 2 * itemSize];
-            gateData[outputIndex + 3] = tempData[i + 3 * itemSize];
+        if(bias){
+            for (int i = 0, outputIndex = 0; i < itemSize; ++i, outputIndex += 4) {
+                const int biasIndex = i % numUnits;
+                gateData[outputIndex] = tempData[i] + bias[biasIndex];                                    // I
+                gateData[outputIndex + 1] = tempData[i + itemSize] + bias[biasIndex + numUnits];          // F
+                gateData[outputIndex + 2] = tempData[i + 2 * itemSize] + bias[biasIndex + 2 * numUnits];  // O
+                gateData[outputIndex + 3] = tempData[i + 3 * itemSize] + bias[biasIndex + 3 * numUnits];  // G
+            }
+        }else{
+            for (int i = 0, outputIndex = 0; i < itemSize; ++i, outputIndex += 4) {
+                gateData[outputIndex] = tempData[i];                     // I
+                gateData[outputIndex + 1] = tempData[i + itemSize];      // F
+                gateData[outputIndex + 2] = tempData[i + 2 * itemSize];  // O
+                gateData[outputIndex + 3] = tempData[i + 3 * itemSize];  // G
+            }
         }
     };
-    
+
     backend()->onReleaseBuffer(&mInput, Backend::DYNAMIC);
     backend()->onReleaseBuffer(&mGates, Backend::DYNAMIC);
-    
+
     return NO_ERROR;
 }
 
@@ -230,13 +252,23 @@ ErrorCode CPULSTM::onExecute(const std::vector<Tensor *> &inputs, const std::vec
     const int timeSteps = input->buffer().dim[1].extent;
     const int numUnits = output->buffer().dim[3].extent;
     const int threadNumber = ((CPUBackend*)backend())->threadNumber();
-    
+
     mTransposeInputFunction(input->host<float>(), mInput.host<float>());
     MNN_CONCURRENCY_BEGIN(index, 4) {
         mUnits[index].mStracssenComputor->onExecute();
     }
     MNN_CONCURRENCY_END();
-    mRetriveOutputFunction(mGates.host<float>());
+
+    float* biasStartPtr = mBiasC->host<float>();
+    if(!mGateHaveBias){
+        biasStartPtr = nullptr;
+    }
+    mRetriveOutputFunction(mGates.host<float>(), biasStartPtr);
+
+    float* recurrenceBiasStartPtr = mBiasC->host<float>();
+    if(mGateHaveBias){
+        recurrenceBiasStartPtr += 4 * numUnits;
+    }
 
     // tranform
     const float *contData = nullptr;
@@ -245,7 +277,7 @@ ErrorCode CPULSTM::onExecute(const std::vector<Tensor *> &inputs, const std::vec
         MNNUnpackC4(mCont.host<float>(), cont->host<float>(), cont->width() * cont->height(), cont->channel());
         contData = mCont.host<float>();
     }
-    
+
     // calc weightHC
     auto cellData     = mCell.host<float>();
     memset(cellData, 0, numUnits * sizeof(float));
@@ -266,7 +298,7 @@ ErrorCode CPULSTM::onExecute(const std::vector<Tensor *> &inputs, const std::vec
                         auto weightHCO = weightHCF + hcStep;
                         auto weightHCG = weightHCO + hcStep;
                         auto hiddenPtr = mOutput.host<float>() + (ic - 1) * numUnits;
-                        
+
                         int i = 0;
 #ifdef MNN_USE_NEON
                         float32x4_t Ix4 = vdupq_n_f32(0);
@@ -296,17 +328,17 @@ ErrorCode CPULSTM::onExecute(const std::vector<Tensor *> &inputs, const std::vec
                             G += weightHCG[i] * hiddenData;
                         }
                     }
-                    
+
                     // add bias
-                    auto biasPtr = mBiasC->host<float>() + oc;
+                    auto biasPtr = recurrenceBiasStartPtr + oc;
                     I            = sigmoid(*biasPtr + I);
                     biasPtr      = biasPtr + numUnits;
-                    F            = cont ? sigmoid(*biasPtr + F) : 0.f;
+                    F            = sigmoid(*biasPtr + F);
                     biasPtr      = biasPtr + numUnits;
                     O            = sigmoid(*biasPtr + O);
                     biasPtr      = biasPtr + numUnits;
                     G            = tanhf(*biasPtr + G);
-                    
+
                     auto newCell   = F * cellData[oc] + I * G;
                     cellData[oc]   = newCell;
                     auto H         = O * tanhf(newCell);

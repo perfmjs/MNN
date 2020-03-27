@@ -8,7 +8,8 @@
 
 #ifndef Vec4_hpp
 #define Vec4_hpp
-#include "Macro.h"
+#include "core/Macro.h"
+#include <algorithm>  // supply std::max and std::min
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
 #endif
@@ -38,6 +39,11 @@ struct Vec4 {
     }
     static void save(float* addr, const Vec4& v) {
         vst1q_f32(addr, v.value);
+    }
+    static Vec4 max(const Vec4& v1, const Vec4& v2) {
+        Vec4 dst;
+        dst.value = vmaxq_f32(v1.value, v2.value);
+        return dst;
     }
     Vec4 operator+(const Vec4& lr) {
         Vec4 dst;
@@ -104,7 +110,11 @@ struct Vec4 {
     }
     Vec4 operator-() {
         Vec4 dst;
+#if defined(_MSC_VER)
+        dst.value = _mm_xor_ps(value, _mm_set1_ps(-0.f)); // Using unary operation to SSE vec is GCC extension. We can not do this directly in MSVC.
+#else
         dst.value = -value;
+#endif
         return dst;
     }
     Vec4() {
@@ -117,15 +127,26 @@ struct Vec4 {
         value = lr.value;
     }
     float operator[](int i) {
+#if defined(_MSC_VER)  // X64 native only mandatory support SSE and SSE2 extension, and we can not find intrinsic function to extract element directly by index in SSE and SSE2 extension.
+        float temp[4];
+        _mm_storeu_ps(temp, value);
+        return temp[i];
+#else
         return value[i];
+#endif
     }
     static Vec4 load(const float* addr) {
         Vec4 v;
-        v.value = _mm_load_ps(addr);
+        v.value = _mm_loadu_ps(addr);
         return v;
     }
     static void save(float* addr, const Vec4& v) {
-        _mm_store_ps(addr, v.value);
+        _mm_storeu_ps(addr, v.value);
+    }
+    static Vec4 max(const Vec4& v1, const Vec4& v2) {
+        Vec4 dst;
+        dst.value = _mm_max_ps(v1.value, v2.value);
+        return dst;
     }
 };
 #else
@@ -200,6 +221,13 @@ struct Vec4 {
         for (int i = 0; i < 4; ++i) {
             addr[i] = v.value[i];
         }
+    }
+    static Vec4 max(const Vec4& v1, const Vec4& v2) {
+        Vec4 dst;
+        for (int i = 0; i < 4; ++i) {
+            dst.value[i] = std::max(v1.value[i], v2.value[i]);
+        }
+        return dst;
     }
 };
 #endif

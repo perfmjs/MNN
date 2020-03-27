@@ -11,13 +11,11 @@ brew install protobuf
 其它平台请参考[官方安装步骤](https://github.com/protocolbuffers/protobuf/tree/master/src)
 
 ```bash
-cd MNN/tools/converter
-./generate_schema.sh
+cd MNN
 mkdir build
-cd build && cmake .. && make -j4
-
-# 或者直接执行脚本
-./build_tool.sh
+cd build
+cmake .. -DMNN_BUILD_CONVERTER=true
+make
 ```
 
 ## 模型转换的使用
@@ -105,7 +103,7 @@ model = torchvision.models.alexnet(pretrained=True).cuda()
 input_names = [ "actual_input_1" ] + [ "learned_%d" % i for i in range(16) ]
 output_names = [ "output1" ]
 
-torch.onnx.export(model, dummy_input, "alexnet.onnx", verbose=True, input_names=input_names, output_names=output_names)
+torch.onnx.export(model, dummy_input, "alexnet.onnx", verbose=True, input_names=input_names, output_names=output_names, do_constant_folding=True)
 ```
 
 - 将 Onnx 模型文件转成 MNN 模型

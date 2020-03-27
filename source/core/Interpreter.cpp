@@ -6,14 +6,15 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Interpreter.hpp"
 #include <math.h>
 #include <stdio.h>
 #include <algorithm>
 #include <vector>
-#include "AutoStorage.h"
 #include "MNN_generated.h"
-#include "Session.hpp"
+#include "core/AutoStorage.h"
+#include <MNN/Interpreter.hpp>
+#include "core/Session.hpp"
+#include "core/FileLoader.hpp"
 namespace MNN {
 
 struct Content {
@@ -23,85 +24,9 @@ struct Content {
     std::map<const Tensor*, const Session*> tensorMap;
 };
 
-class FileLoader {
-public:
-    FileLoader(const char* file) {
-        mFile = fopen(file, "rb");
-    }
-
-    ~FileLoader() {
-        if (nullptr != mFile) {
-            fclose(mFile);
-        }
-        for (auto iter : mBlocks) {
-            MNNMemoryFreeAlign(iter.second);
-        }
-    }
-
-    bool read() {
-        auto block = MNNMemoryAllocAlign(gCacheSize, MNN_MEMORY_ALIGN_DEFAULT);
-        if (nullptr == block) {
-            MNN_PRINT("Memory Alloc Failed\n");
-            return false;
-        }
-        auto size  = fread(block, 1, gCacheSize, mFile);
-        mTotalSize = size;
-        mBlocks.push_back(std::make_pair(size, block));
-
-        while (size == gCacheSize) {
-            block = MNNMemoryAllocAlign(gCacheSize, MNN_MEMORY_ALIGN_DEFAULT);
-            if (nullptr == block) {
-                MNN_PRINT("Memory Alloc Failed\n");
-                return false;
-            }
-            size = fread(block, 1, gCacheSize, mFile);
-            if (size > gCacheSize) {
-                MNN_PRINT("Read file Error\n");
-                MNNMemoryFreeAlign(block);
-                return false;
-            }
-            mTotalSize += size;
-            mBlocks.push_back(std::make_pair(size, block));
-        }
-
-        if (ferror(mFile)) {
-            return false;
-        }
-        return true;
-    }
-
-    bool valid() const {
-        return mFile != nullptr;
-    }
-    inline size_t size() const {
-        return mTotalSize;
-    }
-
-    bool merge(AutoStorage<uint8_t>& buffer) {
-        buffer.reset((int)mTotalSize);
-        if (buffer.get() == nullptr) {
-            MNN_PRINT("Memory Alloc Failed\n");
-            return false;
-        }
-        auto dst   = buffer.get();
-        int offset = 0;
-        for (auto iter : mBlocks) {
-            ::memcpy(dst + offset, iter.second, iter.first);
-            offset += iter.first;
-        }
-        return true;
-    }
-
-private:
-    std::vector<std::pair<size_t, void*>> mBlocks;
-    FILE* mFile                 = nullptr;
-    static const int gCacheSize = 4096;
-    size_t mTotalSize           = 0;
-};
-
 Interpreter* Interpreter::createFromFile(const char* file) {
     if (nullptr == file) {
-        MNN_PRINT("NULL file for create interpreter");
+        MNN_PRINT("NULL file for create interpreter\n");
         return nullptr;
     }
     std::unique_ptr<FileLoader> loader(new FileLoader(file));
@@ -127,7 +52,7 @@ Interpreter* Interpreter::createFromFile(const char* file) {
     return createFromBufferInternal(net);
 }
 Interpreter* Interpreter::createFromBuffer(const void* buffer, size_t size) {
-    if (nullptr == buffer) {
+    if (nullptr == buffer || 0 == size) {
         MNN_PRINT("Buffer is null for create interpreter\n");
         return nullptr;
     }
@@ -150,7 +75,23 @@ Interpreter* Interpreter::createFromBufferInternal(Content* net) {
     flatbuffers::Verifier verify((const uint8_t*)(net->buffer.get()), net->buffer.size());
     if (false == VerifyNetBuffer(verify)) {
         MNN_PRINT("Invalidate buffer to create interpreter\n");
+        delete net;
         return nullptr;
+    }
+    net->net = GetNet(net->buffer.get());
+    if (nullptr == net->net->oplists()) {
+        MNN_ERROR("Model has no oplist\n");
+        delete net;
+        return nullptr;
+    }
+    int opSize = net->net->oplists()->size();
+    for (int i=0; i<opSize; ++i) {
+        auto op = net->net->oplists()->GetAs<Op>(i);
+        if (nullptr == op || nullptr == op->outputIndexes()) {
+            MNN_ERROR("Invalid Model, the %d op is empty\n", i);
+            delete net;
+            return nullptr;
+        }
     }
     return new Interpreter(net);
 }
@@ -158,7 +99,6 @@ Interpreter* Interpreter::createFromBufferInternal(Content* net) {
 Interpreter::Interpreter(Content* net) {
     MNN_ASSERT(nullptr != net);
     mNet      = net;
-    mNet->net = GetNet(mNet->buffer.get());
 }
 
 Interpreter::~Interpreter() {
@@ -166,6 +106,10 @@ Interpreter::~Interpreter() {
 }
 
 Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& configs) {
+    if (nullptr == mNet->buffer.get()) {
+        MNN_ERROR("The model buffer has been released. Can't create session\n");
+        return nullptr;
+    }
     auto info       = Schedule::schedule(mNet->net, configs);
     auto newSession = std::unique_ptr<Session>(new Session(info));
     if (!newSession->valid()) {
@@ -173,30 +117,15 @@ Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& 
         return nullptr;
     }
     auto result = newSession.get();
-    result->resize();
+    if (info.validForResize) {
+        result->resize();
+    }
     mNet->sessions.emplace_back(std::move(newSession));
     return result;
 }
 
 Session* Interpreter::createSession(const ScheduleConfig& config) {
-    if (nullptr == mNet->buffer.get()) {
-        MNN_ERROR("The model buffer has been released. Can't create session\n");
-        return nullptr;
-    }
-    auto info = Schedule::schedule(mNet->net, std::vector<ScheduleConfig>{config});
-
-    auto newSession = std::unique_ptr<Session>(new Session(info));
-
-    if (!newSession->valid()) {
-        MNN_PRINT("Invalide Session!!\n");
-        return nullptr;
-    }
-    auto result = newSession.get();
-
-    result->resize();
-
-    mNet->sessions.emplace_back(std::move(newSession));
-    return result;
+    return createMultiPathSession({config});
 }
 
 bool Interpreter::releaseSession(Session* session) {
@@ -240,11 +169,19 @@ Tensor* Interpreter::getSessionOutput(const Session* session, const char* name) 
 }
 
 const std::map<std::string, Tensor*>& Interpreter::getSessionInputAll(const Session* session) const {
-    return session->getInputAll();
+    auto& tensors = session->getInputAll();
+    for (auto& iter : tensors) {
+        mNet->tensorMap.insert(std::make_pair(iter.second, session));
+    }
+    return tensors;
 }
 
 const std::map<std::string, Tensor*>& Interpreter::getSessionOutputAll(const Session* session) const {
-    return session->getOutputAll();
+    auto& tensors = session->getOutputAll();
+    for (auto& iter : tensors) {
+        mNet->tensorMap.insert(std::make_pair(iter.second, session));
+    }
+    return tensors;
 }
 
 void Interpreter::resizeSession(Session* session) {

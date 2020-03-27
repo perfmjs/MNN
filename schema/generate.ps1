@@ -22,7 +22,7 @@ if (-Not (Test-Path $FLATC -PathType Leaf)) {
 
   # build
   cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release ..
-  nmake
+  cmake --build . --target flatc
 
   # dir recover
   popd
@@ -44,12 +44,7 @@ rm -force current\*.h
 # flatc all fbs
 pushd current
 echo "*** generating fbs under $DIR ***"
-Get-ChildItem ..\$DIR\*.fbs | %{Invoke-Expression "..\$FLATC -c -b $_"}
-popd
-
-# build converter stuff
-pushd ..\tools\converter\
-.\generate_schema.ps1
+Get-ChildItem ..\$DIR\*.fbs | %{Invoke-Expression "..\$FLATC -c -b --gen-object-api --reflect-names  $_"}
 popd
 
 # finish

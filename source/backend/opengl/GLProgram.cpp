@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "GLProgram.hpp"
+#include "backend/opengl/GLProgram.hpp"
 #include <string.h>
 #include <fstream>
 #include <sstream>
-#include "GLDebug.hpp"
+#include "backend/opengl/GLDebug.hpp"
 using namespace std;
 
 namespace MNN {
@@ -78,7 +78,7 @@ GLProgram::GLProgram(const std::string& computeShader) {
     if (!linked) {
 //        FUNC_PRINT(linked);
         GLsizei len;
-        glGetProgramiv(mProgramId, GL_INFO_LOG_LENGTH, &len);
+        glGetProgramiv(mProgramId, GL_INFO_LOG_LENGTH , &len);
         if (len <= 0) {
             glGetProgramInfoLog(mProgramId, 0, &len, NULL);
         }
@@ -92,12 +92,12 @@ GLProgram::GLProgram(const std::string& computeShader) {
     }
 }
 
-std::string GLProgram::getHead() {
+std::string GLProgram::getHead(std::string imageFormat) {
     std::ostringstream headOs;
     headOs << "#version 310 es\n";
     headOs << "#define PRECISION mediump\n";
     headOs << "precision PRECISION float;\n";
-    headOs << "#define FORMAT " << IMAGE_FORMAT << "\n";
+    headOs << "#define FORMAT " << imageFormat << "\n";
     return headOs.str();
 }
 } // namespace OpenGL

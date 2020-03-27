@@ -85,6 +85,7 @@ const std::unordered_map<std::string, MNN::OpType> tfOp2MNNOp{
     {"GatherV2", MNN::OpType_GatherV2},
     {"Minimum", MNN::OpType_BinaryOp},
     {"GreaterEqual", MNN::OpType_BinaryOp},
+    {"LessEqual", MNN::OpType_BinaryOp},
     {"Less", MNN::OpType_BinaryOp},
     {"NonMaxSuppressionV2", MNN::OpType_NonMaxSuppressionV2},
     {"NonMaxSuppressionV3", MNN::OpType_NonMaxSuppressionV2},
@@ -106,7 +107,7 @@ const std::unordered_map<std::string, MNN::OpType> tfOp2MNNOp{
     {"SplitV", MNN::OpType_Slice},
     {"FloorDiv", MNN::OpType_BinaryOp},
     {"Moments", MNN::OpType_Moments},
-    {"InstanceNorm", MNN::OpType_BatchNorm},
+    {"InstanceNorm", MNN::OpType_InstanceNorm},
     {"RNNSequenceGRU", MNN::OpType_RNNSequenceGRU},
     {"BatchMatMul", MNN::OpType_BatchMatMul},
     {"Pow", MNN::OpType_BinaryOp},
@@ -114,6 +115,13 @@ const std::unordered_map<std::string, MNN::OpType> tfOp2MNNOp{
     {"Equal", MNN::OpType_BinaryOp},
     {"ListDiff", MNN::OpType_SetDiff1D},
     {"SetDiff1d", MNN::OpType_SetDiff1D},
+    {"DepthToSpace", MNN::OpType_DepthToSpace},
+    {"SpaceToDepth", MNN::OpType_SpaceToDepth},
+    {"LeakyRelu", MNN::OpType_ReLU},
+    {"ReverseSequence", MNN::OpType_ReverseSequence},
+    {"Elu", MNN::OpType_ELU},
+    {"Conv3D", MNN::OpType_Convolution3D},
+    {"MaxPool3D", MNN::OpType_Pooling3D},
 };
 
 #endif // OPMAPPER_HPP

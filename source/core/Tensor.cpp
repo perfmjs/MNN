@@ -6,14 +6,15 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Tensor.hpp"
+#include <MNN/Tensor.hpp>
 #include <complex.h>
 #include <string.h>
-#include "Backend.hpp"
-#include "MNNMemoryUtils.h"
+#include "core/Backend.hpp"
+#include "core/MNNMemoryUtils.h"
 #include "MNN_generated.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "half.hpp"
 
 #define MAX_TENSOR_DIM 6
 
@@ -40,7 +41,6 @@ Tensor::Tensor(int dimSize, DimensionType type) {
             break;
         case CAFFE_C4:
             mDescribe->dimensionFormat = MNN_DATA_FORMAT_NC4HW4;
-            mBuffer.dim[1].flags       = REORDER_4;
             break;
         default:
             break;
@@ -71,7 +71,6 @@ Tensor::Tensor(const Tensor* tensor, DimensionType type, bool allocMemory) {
             break;
         case CAFFE_C4:
             mDescribe->dimensionFormat = MNN_DATA_FORMAT_NC4HW4;
-            mBuffer.dim[1].flags       = REORDER_4;
             type                       = CAFFE;
             break;
         default:
@@ -80,15 +79,23 @@ Tensor::Tensor(const Tensor* tensor, DimensionType type, bool allocMemory) {
 
     // format mapping
     auto originType = tensor->getDimensionType();
-    if (4 == buffer.dimensions && originType != type) {
+    if (originType != type && buffer.dimensions >= 4) {
         std::vector<int> axisMap;
         // NCHW -> NHWC
         if (originType == CAFFE) {
-            axisMap = std::vector<int>{0, 2, 3, 1};
+            axisMap.push_back(0);
+            for (int i = 2; i < buffer.dimensions; ++i) {
+                axisMap.push_back(i);
+            }
+            axisMap.push_back(1);
         }
         // NHWC -> NCHW
         else {
-            axisMap = std::vector<int>{0, 3, 1, 2};
+            axisMap.push_back(0);
+            axisMap.push_back(buffer.dimensions - 1);
+            for (int i = 1; i < buffer.dimensions - 1; ++i) {
+                axisMap.push_back(i);
+            }
         }
         for (int i = 0; i < buffer.dimensions; ++i) {
             mBuffer.dim[i].extent = buffer.dim[axisMap[i]].extent;
@@ -97,9 +104,12 @@ Tensor::Tensor(const Tensor* tensor, DimensionType type, bool allocMemory) {
     TensorUtils::setLinearLayout(this);
 
     if (allocMemory) {
-        mDescribe->ownHost = true;
-        mBuffer.host       = (uint8_t*)MNNMemoryAllocAlign(size(), MNN_MEMORY_ALIGN_DEFAULT);
-        MNN_ASSERT(mBuffer.host != nullptr);
+        auto memorySize = size();
+        if (memorySize > 0) {
+            mDescribe->ownHost = true;
+            mBuffer.host       = (uint8_t*)MNNMemoryAllocAlign(size(), MNN_MEMORY_ALIGN_DEFAULT);
+            MNN_ASSERT(mBuffer.host != nullptr);
+        }
     }
 }
 
@@ -202,8 +212,6 @@ Tensor::HandleDataType Tensor::getHandleDataType() const {
 void Tensor::setType(int type) {
     switch (type) {
         case DataType_DT_DOUBLE:
-            mBuffer.type = halide_type_of<double>();
-            break;
         case DataType_DT_FLOAT:
             mBuffer.type = halide_type_of<float>();
             break;
@@ -213,10 +221,8 @@ void Tensor::setType(int type) {
         case DataType_DT_QINT32:
         case DataType_DT_INT32:
         case DataType_DT_BOOL:
-            mBuffer.type = halide_type_of<int32_t>();
-            break;
         case DataType_DT_INT64:
-            mBuffer.type = halide_type_of<int64_t>();
+            mBuffer.type = halide_type_of<int32_t>();
             break;
         case DataType_DT_QINT8:
         case DataType_DT_INT8:
@@ -260,15 +266,8 @@ int Tensor::size() const {
     MNN_ASSERT(dataSize >= 1);
     for (int i = 0; i < this->buffer().dimensions; i++) {
         int currentDimSize = mBuffer.dim[i].extent;
-        switch (mBuffer.dim[i].flags) {
-            case REORDER_4:
-                currentDimSize = ALIGN_UP4(currentDimSize);
-                break;
-            case REORDER_8:
-                currentDimSize = ALIGN_UP8(currentDimSize);
-                break;
-            default:
-                break;
+        if (mDescribe->dimensionFormat == MNN_DATA_FORMAT_NC4HW4 && 1 == i) {
+            currentDimSize = ALIGN_UP4(currentDimSize);
         }
         dataSize *= currentDimSize;
     }
@@ -279,8 +278,9 @@ template <typename T>
 void printData(const Tensor* tensor, const void* data, const char* fmt) {
     const T* buffer = (const T*)data;
     if (tensor->dimensions() != 4) {
-        for (int i = 0; i < tensor->elementSize(); i++) {
-            printf(fmt, buffer[i]);
+        auto size = tensor->elementSize();
+        for (int i = 0; i < size; i++) {
+            MNN_PRINT(fmt, buffer[i]);
         }
         MNN_PRINT("\n");
         return;
@@ -305,14 +305,14 @@ void printData(const Tensor* tensor, const void* data, const char* fmt) {
             for (int h = 0; h < height; h++) {
                 for (int w = 0; w < width; w++) {
                     for (int c = 0; c < channel; c++) {
-                        printf(fmt, bytes[h * width * channel + w * channel + c]);
+                        MNN_PRINT(fmt, bytes[h * width * channel + w * channel + c]);
                     }
                     MNN_PRINT("\n");
                 }
                 MNN_PRINT("--------------\n");
             }
         }
-    } else if (tensor->buffer().dim[1].flags == Tensor::REORDER_4) { // NC/4HW4
+    } else if (TensorUtils::getDescribe(tensor)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) { // NC/4HW4
         auto components    = 4;
         auto bytesPerRow   = width * components * unit;
         auto bytesPerImage = height * bytesPerRow;
@@ -326,7 +326,7 @@ void printData(const Tensor* tensor, const void* data, const char* fmt) {
                 for (int h = 0; h < height; h++) {
                     for (int w = 0; w < width; w++) {
                         auto n = c / components, r = c % components;
-                        printf(fmt, bytes[(n * width * height + h * width + w) * components + r]);
+                        MNN_PRINT(fmt, bytes[(n * width * height + h * width + w) * components + r]);
                     }
                     MNN_PRINT("\n");
                 }
@@ -345,7 +345,7 @@ void printData(const Tensor* tensor, const void* data, const char* fmt) {
             for (int c = 0; c < channel; c++) {
                 for (int h = 0; h < height; h++) {
                     for (int w = 0; w < width; w++) {
-                        printf(fmt, bytes[c * width * height + h * width + w]);
+                        MNN_PRINT(fmt, bytes[c * width * height + h * width + w]);
                     }
                     MNN_PRINT("\n");
                 }
@@ -399,14 +399,12 @@ void Tensor::print() const {
     } else if (printee->getType().code == halide_type_float) {
         if (printee->getType().bits == 32) { // float32
             printData<float>(printee, buffer, "%f, ");
+        } else if (printee->getType().bits == 16){
+            // fp16
+            printData<half_float::half>(printee, buffer, "%f, ");
         }
-#ifdef __FLT16_EPSILON__
-        else if (printee->getType().bits == 16) { // float16
-            printData<__fp16>(printee, buffer, "%f, ");
-        }
-#endif
         else {
-            MNN_PRINT("\nunsupported data type");
+            MNN_PRINT("\nunsupported data type\n");
         }
     } else {
         MNN_PRINT("\nunsupported data type");

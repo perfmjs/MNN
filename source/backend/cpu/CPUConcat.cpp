@@ -6,12 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUConcat.hpp"
-#include "AutoStorage.h"
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
-#include "Macro.h"
-
+#include "backend/cpu/CPUConcat.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 using namespace std;
 
 namespace MNN {
@@ -96,9 +95,6 @@ static int _concatBatch(const Tensor* outputTensor, const vector<Tensor*>& input
 static int _concatChannel(const Tensor* outputTensor, const vector<Tensor*>& inputTensors, bool useSlowMethod,
                           const Tensor* tempOutputTensor) {
     auto outputDim        = outputTensor->buffer().dim;
-    const int height      = outputDim[2].extent;
-    const int width       = outputDim[3].extent;
-    int outputPlaneStride = 4 * height * width;
     float* outputOrigin   = reinterpret_cast<float*>(outputTensor->buffer().host);
     int batchSize         = outputDim[0].extent;
 
@@ -126,10 +122,10 @@ static int _concatChannel(const Tensor* outputTensor, const vector<Tensor*>& inp
             auto& inputTensor  = inputTensors[b]->buffer();
             float* inputOrigin = reinterpret_cast<float*>(inputTensor.host) + inputTensor.dim[0].stride * batchIndex;
             int inputZ         = UP_DIV(inputTensor.dim[1].extent, 4);
-            float* dst         = outputOrigin + outputPlaneStride * currentPositionZ + outputDim[0].stride * batchIndex;
+            float* dst         = outputOrigin + outputDim[1].stride * currentPositionZ * 4 + outputDim[0].stride * batchIndex;
             float* src         = inputOrigin;
 
-            memcpy(dst, src, outputPlaneStride * inputZ * sizeof(float));
+            memcpy(dst, src, outputDim[1].stride * 4 * inputZ * sizeof(float));
             currentPositionZ += inputZ;
         }
     }
@@ -176,7 +172,7 @@ ErrorCode CPUConcat::onResize(const std::vector<Tensor*>& inputs, const std::vec
     auto output    = outputs[0];
     mUseSlowMethod = false;
     mTempOutput.reset();
-    if (output->buffer().dimensions > 1 && output->buffer().dim[1].flags == Tensor::REORDER_4) {
+    if (output->buffer().dimensions > 1 && TensorUtils::getDescribe(output)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
         if (1 == mAxis) {
             // The last tensor needn't be aligned
             for (size_t b = 0; b < inputs.size() - 1; b++) {
@@ -204,7 +200,7 @@ ErrorCode CPUConcat::onExecute(const vector<Tensor*>& inputs, const std::vector<
     MNN_ASSERT(1 == outputs.size());
     MNN_ASSERT(inputs.size() >= 2);
     auto input = inputs[0];
-    if (input->buffer().dimensions > 1 && input->buffer().dim[1].flags == Tensor::REORDER_4) {
+    if (input->buffer().dimensions > 1 && TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
         switch (mAxis) {
             case 0:
                 _concatBatch(outputs[0], inputs);

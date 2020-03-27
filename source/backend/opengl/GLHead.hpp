@@ -28,10 +28,7 @@
 #include <GL/glew.h>
 #endif
 #endif
-#include "GLDebug.hpp"
+#include "backend/opengl/GLDebug.hpp"
 #define OPENGL_ASSERT(x) assert(x)
-
-#define TEXTURE_FORMAT GL_RGBA16F
-#define IMAGE_FORMAT "rgba16f"
 
 #endif

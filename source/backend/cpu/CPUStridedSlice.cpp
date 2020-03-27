@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUStridedSlice.hpp"
-#include "CPUBackend.hpp"
+#include "backend/cpu/CPUStridedSlice.hpp"
+#include "backend/cpu/CPUBackend.hpp"
 
 namespace MNN {
 
@@ -24,7 +24,6 @@ ErrorCode CPUStridedSlice::onResize(const std::vector<Tensor *> &inputs, const s
     MNN_ASSERT(inputDimension > 0);
 
     // input haven't realized
-    auto output    = outputs[0];
     auto parameter = mOp->main_as_StridedSliceParam();
 
     Tensor *begin   = inputs[1];
@@ -118,14 +117,6 @@ ErrorCode CPUStridedSlice::onResize(const std::vector<Tensor *> &inputs, const s
         beginShape.push_back(0);
     }
 
-    output->buffer().dimensions    = (int)outputShapeShrinked.size();
-    output->buffer().dim[0].extent = 1;
-
-    for (int i = 0; i < outputShapeShrinked.size(); i++) {
-        output->buffer().dim[i].extent = outputShapeShrinked[i];
-        output->buffer().dim[i].flags  = 0;
-    }
-
     mBeginShape.clear();
     mEndShape.clear();
     mStrideShape.clear();
@@ -141,12 +132,12 @@ ErrorCode CPUStridedSlice::onExecute(const std::vector<Tensor *> &inputs, const 
     Tensor *input = inputs[0];
     auto output   = outputs[0];
     switch (mDataType) {
+        case DataType_DT_INT64:
         case DataType_DT_INT32:
             return execute<int32_t>(input, output);
         case DataType_DT_FLOAT:
-            return execute<float>(input, output);
         case DataType_DT_DOUBLE:
-            return execute<double>(input, output);
+            return execute<float>(input, output);
         default:
             break;
     }

@@ -7,7 +7,7 @@ __constant sampler_t SAMPLER = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP |
 
 
 __kernel void nc4hw4_buffer_to_image(GLOBAL_SIZE_2_DIMS __global const float *input_ptr, __private const int2 output_shape,
-                                     __private const int channel_up_4, __write_only image2d_t output) {
+                                     __private const int channel_4, __write_only image2d_t output) {
 
     int image_width_idx  = get_global_id(0);
     int image_height_idx = get_global_id(1);
@@ -19,7 +19,7 @@ __kernel void nc4hw4_buffer_to_image(GLOBAL_SIZE_2_DIMS __global const float *in
     const int width_idx         = image_width_idx % output_shape.y;
     const int channel_block_idx = image_width_idx / output_shape.y;
     int buffer_offset =
-        (((batch_idx * channel_up_4 + channel_block_idx) * output_shape.x + height_idx) * output_shape.y + width_idx) * 4;
+        (((batch_idx * channel_4 + channel_block_idx) * output_shape.x + height_idx) * output_shape.y + width_idx) * 4;
 
     float4 values = vload4(0, input_ptr + buffer_offset);
 
@@ -29,7 +29,7 @@ __kernel void nc4hw4_buffer_to_image(GLOBAL_SIZE_2_DIMS __global const float *in
 
 __kernel void image_to_nc4hw4_buffer(GLOBAL_SIZE_2_DIMS __global float *output, /* nchw */
                                      __private const int2 output_shape,
-                                     __private const int channel_up_4,
+                                     __private const int channel_4,
                                      __read_only image2d_t input_ptr) {
     int image_width_idx  = get_global_id(0);
     int image_height_idx = get_global_id(1);
@@ -42,12 +42,55 @@ __kernel void image_to_nc4hw4_buffer(GLOBAL_SIZE_2_DIMS __global float *output, 
     int channel_block_idx = image_width_idx / output_shape.y;
 
     int buffer_offset =
-        (((batch_idx * channel_up_4 + channel_block_idx) * output_shape.x + height_idx) * output_shape.y + width_idx) * 4;
+        (((batch_idx * channel_4 + channel_block_idx) * output_shape.x + height_idx) * output_shape.y + width_idx) * 4;
 
     int2 coord        = (int2)(image_width_idx, image_height_idx);
     float4 values = read_imagef(input_ptr, SAMPLER, coord);
 
     vstore4(values, 0, output + buffer_offset);
+}
+
+// convert kernel : from buffer(oi ) to image(oc, ic/4)
+__kernel void conv2d1x1_opt_filter_buffer_to_image(GLOBAL_SIZE_2_DIMS __global const float *input_ptr,
+                                            __private const int input_channel, __private const int2 kernel_shape, __private const int ic_h_w_size,
+                                            __private const int height_width_size, __write_only image2d_t output) {
+    
+    int ic_4_idx  = get_global_id(0); // ic/4
+    int oc_idx = get_global_id(1); // oc
+
+    DEAL_NON_UNIFORM_DIM2(ic_4_idx, oc_idx);
+
+    const int ic_idx  = ic_4_idx * 4;
+
+    const int buffer_offset = oc_idx * input_channel + ic_idx;
+    
+    float4 output_values = 0;
+    if (ic_idx < input_channel) {
+        const int remain_channel = input_channel - ic_idx;
+        if (remain_channel >= 4) {
+            output_values.x = *(input_ptr + buffer_offset);
+            output_values.y = *(input_ptr + buffer_offset + 1);
+            output_values.z = *(input_ptr + buffer_offset + 2);
+            output_values.w = *(input_ptr + buffer_offset + 3);
+        } else if (remain_channel == 3) {
+            output_values.x = *(input_ptr + buffer_offset);
+            output_values.y = *(input_ptr + buffer_offset + 1);
+            output_values.z = *(input_ptr + buffer_offset + 2);
+            output_values.w = 0;
+        } else if (remain_channel == 2) {
+            output_values.x = *(input_ptr + buffer_offset);
+            output_values.y = *(input_ptr + buffer_offset + 1);
+            output_values.z = 0;
+            output_values.w = 0;
+        } else if (remain_channel == 1) {
+            output_values.x = *(input_ptr + buffer_offset);
+            output_values.y = 0;
+            output_values.z = 0;
+            output_values.w = 0;
+        }
+    }
+
+    write_imagef(output, (int2)(ic_4_idx, oc_idx), output_values);
 }
 
 // convert kernel : from buffer(oihw) to image(oc/4 h w , ic oc4)

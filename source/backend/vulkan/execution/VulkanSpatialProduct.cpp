@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanSpatialProduct.hpp"
-#include "Macro.h"
+#include "backend/vulkan/execution/VulkanSpatialProduct.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 struct GpuParam {
@@ -70,7 +70,7 @@ ErrorCode VulkanSpatialProduct::onEncode(const std::vector<Tensor*>& inputs, con
 
 class VulkanSpatialProductCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanSpatialProduct(op, bn);
     }
 };

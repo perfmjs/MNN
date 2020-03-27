@@ -8,20 +8,20 @@
 
 #define MNN_OPEN_TIME_TRACE
 
+#include <MNN/MNNDefine.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <MNN/AutoTime.hpp>
+#include <MNN/Interpreter.hpp>
+#include <MNN/Tensor.hpp>
 #include <fstream>
 #include <map>
 #include <sstream>
-#include "AutoTime.hpp"
-#include "Backend.hpp"
-#include "Interpreter.hpp"
-#include "MNNDefine.h"
-#include "Macro.h"
-#include "Tensor.hpp"
-#include "TensorUtils.hpp"
+#include "core/Backend.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 #define NONE "\e[0m"
 #define RED "\e[0;31m"
@@ -30,6 +30,14 @@
 #define BLUE "\e[0;34m"
 #define L_BLUE "\e[1;34m"
 #define BOLD "\e[1m"
+
+template<typename T>
+inline T stringConvert(const char* number) {
+    std::istringstream os(number);
+    T v;
+    os >> v;
+    return v;
+}
 
 MNN::Tensor* createTensor(const MNN::Tensor* shape, const char* path) {
     std::ifstream stream(path);
@@ -58,24 +66,42 @@ int main(int argc, const char* argv[]) {
     // create net
     auto type = MNN_FORWARD_CPU;
     if (argc > 4) {
-        type = (MNNForwardType)::atoi(argv[4]);
+        type = (MNNForwardType)stringConvert<int>(argv[4]);
     }
     auto tolerance = 0.1f;
     if (argc > 5) {
-        tolerance = ::atof(argv[5]);
+        tolerance = stringConvert<float>(argv[5]);
     }
     std::shared_ptr<MNN::Interpreter> net =
         std::shared_ptr<MNN::Interpreter>(MNN::Interpreter::createFromFile(modelPath));
 
     // create session
     MNN::ScheduleConfig config;
-    config.type  = type;
-    auto session = net->createSession(config);
+    config.type = type;
+    MNN::BackendConfig backendConfig;
+    if (type != MNN_FORWARD_CPU) {
+        // Use Precision_High for other backend
+        // Test CPU ARM v8.2 and other approciate method
+        backendConfig.precision = MNN::BackendConfig::Precision_High;
+    }
+    config.backendConfig = &backendConfig;
+    auto session         = net->createSession(config);
 
     auto allInput = net->getSessionInputAll(session);
     for (auto& iter : allInput) {
         auto size = iter.second->size();
-        auto ptr  = iter.second->host<void>();
+
+        auto bnType   = MNN_FORWARD_CPU;
+        auto tensorBn = MNN::TensorUtils::getDescribe(iter.second)->backend;
+        if (tensorBn) {
+            bnType = tensorBn->type();
+        }
+        // memory is fp16, but size == element * sizeof(float)
+        if (bnType == MNN_FORWARD_CPU_EXTENSION) {
+            size /= 2;
+        }
+
+        auto ptr = iter.second->host<void>();
         std::shared_ptr<MNN::Tensor> tempTensor;
         if (nullptr == ptr) {
             tempTensor = std::shared_ptr<MNN::Tensor>(MNN::Tensor::createHostTensorFromDevice(iter.second, false),
@@ -84,7 +110,7 @@ int main(int argc, const char* argv[]) {
                                                           iter.second->copyFromHostTensor(hostTensor);
                                                           delete hostTensor;
                                                       });
-            ptr = tempTensor->host<float>();
+            ptr        = tempTensor->host<float>();
         }
         ::memset(ptr, 0, size);
     }
@@ -100,7 +126,7 @@ int main(int argc, const char* argv[]) {
 #endif
         return -1;
     }
-    net->getBackend(session, inputTensor)->onCopyBuffer(givenTensor, inputTensor);
+    inputTensor->copyFromHostTensor(givenTensor);
     delete givenTensor;
 
     // infer

@@ -6,9 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ImageBlitter.hpp"
+#include "cv/ImageBlitter.hpp"
 #include <string.h>
-#include "Macro.h"
+#include <mutex>
+#include "core/Macro.h"
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
 #endif
@@ -128,6 +129,28 @@ static void _rgba2bgr(const unsigned char* source, unsigned char* dest, size_t c
         dest[3 * i + 0] = source[4 * i + 2];
         dest[3 * i + 1] = source[4 * i + 1];
         dest[3 * i + 2] = source[4 * i + 0];
+    }
+}
+static void _rgb2bgr(const unsigned char* source, unsigned char* dest, size_t count) {
+    int sta = 0;
+#ifdef MNN_USE_NEON
+    int countD8 = (int)count / 8;
+    if (countD8 > 0) {
+        for (int i = 0; i < countD8; ++i) {
+            uint8x8x3_t rgba = vld3_u8(source + 24 * i);
+            uint8x8x3_t bgr;
+            bgr.val[0] = rgba.val[2];
+            bgr.val[1] = rgba.val[1];
+            bgr.val[2] = rgba.val[0];
+            vst3_u8(dest + 24 * i, bgr);
+        }
+        sta = countD8 * 8;
+    }
+#endif
+    for (int i = sta; i < count; ++i) {
+        dest[3 * i + 0] = source[3 * i + 2];
+        dest[3 * i + 1] = source[3 * i + 1];
+        dest[3 * i + 2] = source[3 * i + 0];
     }
 }
 static void _bgra2bgr(const unsigned char* source, unsigned char* dest, size_t count) {
@@ -368,46 +391,43 @@ void MNNNV21ToBGR(const unsigned char* source, unsigned char* dest, size_t count
     }
 }
 
-typedef std::pair<ImageFormat, ImageFormat> DIFORMAT;
-typedef std::map<DIFORMAT, ImageBlitter::BLITTER> FORMATCONVERT;
+#define CHECKFORMAT(src, dst, func)\
+if (source == src && dest == dst) return func
+
 ImageBlitter::BLITTER ImageBlitter::choose(ImageFormat source, ImageFormat dest) {
-    static std::map<DIFORMAT, ImageBlitter::BLITTER> gBlitterFunc{
-        FORMATCONVERT::value_type(std::make_pair(RGBA, RGBA), _copyC4),
-        FORMATCONVERT::value_type(std::make_pair(RGBA, BGRA), _rgba2bgra),
-        FORMATCONVERT::value_type(std::make_pair(RGBA, BGR), _rgba2bgr),
-        FORMATCONVERT::value_type(std::make_pair(RGBA, RGB), _bgra2bgr),
-        FORMATCONVERT::value_type(std::make_pair(RGBA, GRAY), _rgba2gray),
-
-        FORMATCONVERT::value_type(std::make_pair(BGRA, RGBA), _rgba2bgra),
-        FORMATCONVERT::value_type(std::make_pair(BGRA, BGRA), _copyC4),
-        FORMATCONVERT::value_type(std::make_pair(BGRA, BGR), _bgra2bgr),
-        FORMATCONVERT::value_type(std::make_pair(BGRA, RGB), _rgba2bgr),
-        FORMATCONVERT::value_type(std::make_pair(BGRA, GRAY), _bgra2gray),
-
-        FORMATCONVERT::value_type(std::make_pair(RGB, RGB), _copyC3),
-        FORMATCONVERT::value_type(std::make_pair(RGB, GRAY), _rgb2gray),
-
-        FORMATCONVERT::value_type(std::make_pair(BGR, BGR), _copyC3),
-        FORMATCONVERT::value_type(std::make_pair(BGR, GRAY), _bgr2gray),
-
-        FORMATCONVERT::value_type(std::make_pair(GRAY, RGBA), _gray2C4),
-        FORMATCONVERT::value_type(std::make_pair(GRAY, BGRA), _gray2C4),
-        FORMATCONVERT::value_type(std::make_pair(GRAY, BGR), _gray2C3),
-        FORMATCONVERT::value_type(std::make_pair(GRAY, RGB), _gray2C3),
-        FORMATCONVERT::value_type(std::make_pair(GRAY, GRAY), _copyC1),
-
-        FORMATCONVERT::value_type(std::make_pair(YUV_NV21, GRAY), _copyC1),
-        FORMATCONVERT::value_type(std::make_pair(YUV_NV21, RGB), MNNNV21ToRGB),
-        FORMATCONVERT::value_type(std::make_pair(YUV_NV21, BGR), MNNNV21ToBGR),
-        FORMATCONVERT::value_type(std::make_pair(YUV_NV21, RGBA), MNNNV21ToRGBA),
-    };
-
-    auto iter = gBlitterFunc.find(std::make_pair(source, dest));
-    if (iter == gBlitterFunc.end()) {
-        MNN_ERROR("ImageBlitter Don't support %d to %d\n", source, dest);
-        return nullptr;
+    if (source == YUV_NV12) {
+        source = YUV_NV21;
     }
-    return iter->second;
+    CHECKFORMAT(RGBA, RGBA, _copyC4);
+    CHECKFORMAT(RGBA, BGRA, _rgba2bgra);
+    CHECKFORMAT(RGBA, BGR, _rgba2bgr);
+    CHECKFORMAT(RGBA, RGB, _bgra2bgr);
+    CHECKFORMAT(RGBA, GRAY, _rgba2gray);
+    CHECKFORMAT(BGRA, RGBA, _rgba2bgra);
+    CHECKFORMAT(BGRA, BGRA, _copyC4);
+    CHECKFORMAT(BGRA, BGR, _bgra2bgr);
+    CHECKFORMAT(BGRA, RGB, _rgba2bgr);
+    CHECKFORMAT(BGRA, GRAY, _bgra2gray);
+    CHECKFORMAT(RGB, RGB, _copyC3);
+    CHECKFORMAT(RGB, BGR, _rgb2bgr);
+    CHECKFORMAT(RGB, GRAY, _rgb2gray);
+
+    CHECKFORMAT(BGR, BGR, _copyC3);
+    CHECKFORMAT(BGR, RGB, _rgb2bgr);
+    CHECKFORMAT(BGR, GRAY, _bgr2gray);
+
+    CHECKFORMAT(GRAY, RGBA, _gray2C4);
+    CHECKFORMAT(GRAY, BGRA, _gray2C4);
+    CHECKFORMAT(GRAY, BGR, _gray2C3);
+    CHECKFORMAT(GRAY, RGB, _gray2C3);
+    CHECKFORMAT(GRAY, GRAY, _copyC1);
+
+    CHECKFORMAT(YUV_NV21, GRAY, _copyC1);
+    CHECKFORMAT(YUV_NV21, RGB, MNNNV21ToRGB);
+    CHECKFORMAT(YUV_NV21, BGR, MNNNV21ToBGR);
+    CHECKFORMAT(YUV_NV21, RGBA, MNNNV21ToRGBA);
+
+    return nullptr;
 }
 } // namespace CV
 } // namespace MNN

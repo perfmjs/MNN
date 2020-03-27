@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ConvolutionDepthwise3x3.hpp"
-#include "CPUBackend.hpp"
-#include "Concurrency.h"
-#include "Macro.h"
-#include "Vec4.hpp"
+#include "backend/cpu/compute/ConvolutionDepthwise3x3.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/Concurrency.h"
+#include "core/Macro.h"
+#include "math/Vec4.hpp"
 
 using namespace MNN::Math;
 extern "C" {
@@ -155,6 +155,7 @@ ConvolutionDepthwise3x3::ConvolutionDepthwise3x3(const Convolution2DCommon *comm
         return;
     }
     auto weightHost = mWeight->host<float>();
+    ::memset(weightHost, 0, mWeight->size());
 
     /* 1D-Winograd F(2,3) and tiling */
     for (int c = 0; c < channel; ++c) {

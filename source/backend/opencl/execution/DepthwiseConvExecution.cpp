@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "DepthwiseConvExecution.hpp"
-#include <Macro.h>
+#include "backend/opencl/execution/DepthwiseConvExecution.hpp"
+#include "core/Macro.h"
 #include <string.h>
-#include "TensorUtils.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -42,9 +42,14 @@ DepthwiseConvExecution::DepthwiseConvExecution(const std::vector<Tensor *> &inpu
     cl::Buffer filterBufferCL(mOpenCLBackend->getOpenCLRuntime()->context(), CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
                               filterBuffer->size());
     filterBuffer->buffer().device = (uint64_t)(&filterBufferCL);
+    cl_int error;
     auto ptrCL = mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueMapBuffer(filterBufferCL, true, CL_MAP_WRITE,
-                                                                                     0, filterBuffer->size());
-    ::memcpy(ptrCL, filterDataPtr, filterBuffer->size());
+                                                                                     0, filterBuffer->size(), nullptr, nullptr, &error);
+    if(ptrCL != nullptr && error == CL_SUCCESS){
+        ::memcpy(ptrCL, filterDataPtr, filterBuffer->size());
+    }else{
+        MNN_ERROR("Map error ptrCL == nullptr \n");
+    }
     mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(filterBufferCL, ptrCL);
 
     mOpenCLBackend->onAcquireBuffer(mFilter.get(), Backend::STATIC);

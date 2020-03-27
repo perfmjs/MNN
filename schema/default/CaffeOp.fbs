@@ -21,12 +21,26 @@ table Convolution2DCommon {
     inputCount:int = 0;
     relu:bool=false;
     relu6:bool=false;
+    pads:[int];
+}
+
+table Convolution3DCommon {
+    dilates:[int];
+    strides:[int];
+    kernels:[int];
+    pads:[int];
+    padMode:PadMode = CAFFE;
+    inputCount:int = 0;
+    outputCount:int = 0;
+    relu:bool = false;
+    relu6:bool = false;
 }
 
 // idst param
 table IDSTQuan {
     buffer:[byte];
     alpha:[float];
+    // 1->idstQuanInt8, 2->idstSparseQuan, 3->fp16
     type:int;
     useInt32:bool;
     quantScale:float;
@@ -38,12 +52,30 @@ table IDSTQuan {
     has_scaleInt:bool;
 }
 
+table QuantizedFloatParam{
+    weight:[byte];
+    bias:[int];
+    // scale channel-wise(depthwise conv/batchnorm...)
+    // which is used to int32*scale->int8
+    scale:[float];
+    // tensor scale, which is used to dequantize the int8 value to float value 
+    // only used for debug or output op
+    tensorScale:[float];
+}
+
 table Convolution2D {
     common:Convolution2DCommon;
     weight:[float];
     bias:[float];
 
     quanParameter:IDSTQuan;
+    symmetricQuan:QuantizedFloatParam;
+}
+
+table Convolution3D {
+    common:Convolution3DCommon;
+    weight:[float];
+    bias:[float];
 }
 
 table InnerProduct {
@@ -79,6 +111,16 @@ table Pool {
     padType:PoolPadType;
     dataType:DataType=DT_FLOAT;
     ceilModel:bool=true;
+    pads:[int];
+}
+
+table Pool3D {
+    strides:[int];
+    kernels:[int];
+    pads:[int];
+
+    type:PoolType;
+    padType:PoolPadType;
 }
 
 table Relu {
@@ -92,6 +134,10 @@ table Relu6 {
 table PRelu {
     slopeCount:int;
     slope:[float];
+}
+
+table ELU {
+    alpha:float;
 }
 
 table LRN {
@@ -219,6 +265,7 @@ table Interp {
     outputHeight:int;
     resizeType:int;
     alignCorners:bool;
+    halfPixelCenters:bool = false;
 }
 
 table Resize {
@@ -247,3 +294,9 @@ table Normalize {
   scale:[float];
 }
 
+table EltwiseInt8 {
+    type:EltwiseType;
+    inputQuan0:QuantizedFloatParam;
+    inputQuan1:QuantizedFloatParam;
+    outputQuan:QuantizedFloatParam;
+}

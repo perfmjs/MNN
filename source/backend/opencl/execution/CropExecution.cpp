@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "execution/CropExecution.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-#include "core/OpenCLBackend.hpp"
-#include "core/OpenCLRunningUtils.hpp"
+#include "backend/opencl/execution/CropExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "backend/opencl/core/OpenCLBackend.hpp"
+#include "backend/opencl/core/OpenCLRunningUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -116,7 +116,7 @@ ErrorCode CropExecution::onExecute(const std::vector<Tensor *> &inputs, const st
     cl::Event event;
     std::vector<uint32_t> roundUpGroupWorkSize(lws.size());
     for (size_t i = 0; i < lws.size(); ++i) {
-        roundUpGroupWorkSize[i] = ROUND_UP(outputGlobalWorkSize[i], lws[i]);
+        roundUpGroupWorkSize[i] = ROUND_UP(outputGlobalWorkSize[i], std::max((uint32_t)1, lws[i]));
     }
 
     runtime->commandQueue().enqueueNDRangeKernel(mKernel, cl::NullRange,

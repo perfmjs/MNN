@@ -6,19 +6,18 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "GLTexture.hpp"
+#include "backend/opengl/GLTexture.hpp"
 namespace MNN {
 namespace OpenGL {
-#include "AutoTime.hpp"
+#include <MNN/AutoTime.hpp>
 
 GLTexture::~GLTexture() {
-    AUTOTIME;
     glDeleteTextures(1, &mId);
     OPENGL_CHECK_ERROR;
 }
 
-GLTexture::GLTexture(int w, int h, int d, GLenum target, bool HWC4) {
-    AUTOTIME;
+GLTexture::GLTexture(int w, int h, int d, GLenum textrueFormat, GLenum target, bool HWC4) {
+    mTextrueFormat = textrueFormat;
     if(target == GL_TEXTURE_3D){
         GLASSERT(w > 0 && h > 0 && d > 0);
         mTarget = target;
@@ -36,7 +35,7 @@ GLTexture::GLTexture(int w, int h, int d, GLenum target, bool HWC4) {
         OPENGL_CHECK_ERROR;
         glTexParameteri(mTarget, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         OPENGL_CHECK_ERROR;
-        
+
         int realW = w;
         int realH = h;
         int realD = d;
@@ -45,7 +44,7 @@ GLTexture::GLTexture(int w, int h, int d, GLenum target, bool HWC4) {
             realH = h;
             realW = w;
         }
-        glTexStorage3D(mTarget, 1, TEXTURE_FORMAT, realW, realH, realD);
+        glTexStorage3D(mTarget, 1, mTextrueFormat, realW, realH, realD);
         OPENGL_CHECK_ERROR;
     }else if(target == GL_TEXTURE_2D){
         GLASSERT(w > 0 && h > 0);
@@ -64,13 +63,13 @@ GLTexture::GLTexture(int w, int h, int d, GLenum target, bool HWC4) {
         OPENGL_CHECK_ERROR;
         glTexParameteri(mTarget, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         OPENGL_CHECK_ERROR;
-        
+
         int realW = w;
         int realH = h;
-        glTexStorage2D(mTarget, 1, TEXTURE_FORMAT, realW, realH);
+        glTexStorage2D(mTarget, 1, mTextrueFormat, realW, realH);
         OPENGL_CHECK_ERROR;
     }
-    
+
 }
 
 void GLTexture::sample(GLuint unit, GLuint texId) {
@@ -81,12 +80,12 @@ void GLTexture::sample(GLuint unit, GLuint texId) {
 }
 
 void GLTexture::read(GLuint unit) {
-    glBindImageTexture(unit, mId, 0, GL_TRUE, 0, GL_READ_ONLY, TEXTURE_FORMAT);
+    glBindImageTexture(unit, mId, 0, GL_TRUE, 0, GL_READ_ONLY, mTextrueFormat);
     OPENGL_CHECK_ERROR;
 }
 
 void GLTexture::write(GLuint unit) {
-    glBindImageTexture(unit, mId, 0, GL_TRUE, 0, GL_WRITE_ONLY, TEXTURE_FORMAT);
+    glBindImageTexture(unit, mId, 0, GL_TRUE, 0, GL_WRITE_ONLY, mTextrueFormat);
     OPENGL_CHECK_ERROR;
 }
 } // namespace OpenGL

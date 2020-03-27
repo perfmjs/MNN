@@ -27,10 +27,10 @@
 #include <dirent.h>
 #endif
 
-#include "Backend.hpp"
-#include "Interpreter.hpp"
-#include "MNNDefine.h"
-#include "Tensor.hpp"
+#include "core/Backend.hpp"
+#include <MNN/Interpreter.hpp>
+#include <MNN/MNNDefine.h>
+#include <MNN/Tensor.hpp>
 #include "revertMNNModel.hpp"
 /**
  TODOs:
@@ -54,7 +54,8 @@ std::vector<Model> findModelFiles(const char* dir) {
 #if defined(_MSC_VER)
     WIN32_FIND_DATA ffd;
     HANDLE hFind = INVALID_HANDLE_VALUE;
-    hFind = FindFirstFile(dir, &ffd);
+    std::string mnn_model_pattern = std::string(dir) + "\\*.mnn"; 
+    hFind = FindFirstFile(mnn_model_pattern.c_str(), &ffd);
     if (INVALID_HANDLE_VALUE == hFind) {
         std::cout << "open " << dir << " failed: " << strerror(errno) << std::endl;
         return models;
@@ -63,7 +64,7 @@ std::vector<Model> findModelFiles(const char* dir) {
         Model m;
         m.name       = ffd.cFileName;
         m.model_file = std::string(dir) + "\\" + m.name;
-        if(INVALID_FILE_ATTRIBUTES != GetFileAttributes(m.model_file.c_str()) || GetLastError() != ERROR_FILE_NOT_FOUND) {
+        if(INVALID_FILE_ATTRIBUTES != GetFileAttributes(m.model_file.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) {
             models.push_back(std::move(m));
         }
     } while (FindNextFile(hFind, &ffd) != 0);
@@ -128,6 +129,7 @@ std::vector<float> doBench(Model& model, int loop, int forward = MNN_FORWARD_CPU
     config.type      = static_cast<MNNForwardType>(forward);
     MNN::BackendConfig backendConfig;
     backendConfig.precision = (MNN::BackendConfig::PrecisionMode)precision;
+    backendConfig.power = MNN::BackendConfig::Power_High;
     config.backendConfig = &backendConfig;
 
     std::vector<float> costs;

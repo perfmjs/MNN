@@ -6,16 +6,15 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 class ConstComputer : public SizeComputer {
 public:
     virtual bool onComputeSize(const MNN::Op* op, const std::vector<Tensor*>& inputs,
                                const std::vector<Tensor*>& outputs) const override {
-        MNN_ASSERT(0 == inputs.size());
+        //MNN_ASSERT(0 == inputs.size());
         MNN_ASSERT(1 == outputs.size());
 
         // copy dims
@@ -25,7 +24,6 @@ public:
         output->buffer().dimensions = parameter->dims() ? parameter->dims()->size() : 0;
         for (int i = 0; i < output->buffer().dimensions; i++) {
             output->buffer().dim[i].extent = parameter->dims()->Get(i);
-            output->buffer().dim[i].flags  = 0;
         }
 
         output->setType(parameter->dataType());
@@ -36,5 +34,6 @@ public:
 };
 
 REGISTER_SHAPE(ConstComputer, OpType_Const);
+REGISTER_SHAPE(ConstComputer, OpType_TrainableParam);
 
 } // namespace MNN

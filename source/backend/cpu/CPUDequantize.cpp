@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUDequantize.hpp"
+#include "backend/cpu/CPUDequantize.hpp"
 #include <math.h>
-#include "CPUBackend.hpp"
-#include "Macro.h"
+#include "backend/cpu/CPUBackend.hpp"
+#include "core/Macro.h"
 
 #define UNIT 4
 #define TILE 2
@@ -30,7 +30,7 @@ void dequantizeMinFirst(uint8_t* input, float* output, float* rangeScale, float*
 namespace MNN {
 
 template <typename T>
-CPUDequantize<T>::CPUDequantize(Backend* backend, QuantizeMode mode, const Op* op) : mMode(mode), Execution(backend) {
+CPUDequantize<T>::CPUDequantize(Backend* backend, QuantizeMode mode, const Op* op) :  Execution(backend), mMode(mode) {
     mHalfRange = !std::is_signed<T>::value ? 0.0f
                                            : (static_cast<double>(std::numeric_limits<T>::max()) -
                                               static_cast<double>(std::numeric_limits<T>::min()) + 1) /

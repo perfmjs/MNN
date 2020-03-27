@@ -6,16 +6,16 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ConvolutionInt8Executor.hpp"
-#include "CommonOptFunction.h"
-#include "Concurrency.h"
-#include "ConvOpt.h"
-#include "ConvolutionIntFactory.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-
+#include "backend/cpu/compute/ConvolutionInt8Executor.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Concurrency.h"
+#include "backend/cpu/compute/ConvOpt.h"
+#include "backend/cpu/compute/ConvolutionIntFactory.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "backend/cpu/compute/Int8FunctionsOpt.h"
 #define MNN_OPEN_TIME_TRACE
-#include "AutoTime.hpp"
+#include <MNN/AutoTime.hpp>
 
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
@@ -66,7 +66,7 @@ void MNNGemmInt8toFloat32_8x4_Unit(float* dst, const int8_t* src, const int8_t* 
 
 namespace MNN {
 ConvolutionInt8Executor::ConvolutionInt8Executor(const Convolution2DCommon* convOp, Backend* b,
-                                                 const ConvolutionIntFactory::Int8Common* common, const float* bias,
+                                                 const ConvolutionCommon::Int8Common* common, const float* bias,
                                                  size_t biasSize)
     : MNN::CPUConvolution(convOp, b) {
     mBias.reset(ALIGN_UP4((int)biasSize));
@@ -144,7 +144,7 @@ ErrorCode ConvolutionInt8Executor::onResize(const std::vector<Tensor*>& inputs, 
     mIm2ColParamter.kernelCountUnit =
         UP_DIV(mIm2ColParamter.icDiv4 * mIm2ColParamter.kernelY * mIm2ColParamter.kernelX, 2);
 
-    TensorUtils::copyShape(inputs[0], &mSrcCopyBuffer);
+    TensorUtils::copyShape(inputs[0], &mSrcCopyBuffer, true);
     mSrcCopyBuffer.buffer().dim[0].extent = 1;
     mSrcCopyBuffer.buffer().type          = halide_type_of<int8_t>();
     TensorUtils::setLinearLayout(&mTempBuffer);
@@ -222,7 +222,7 @@ static void _im2ColCommonZ1(int8_t* colAddr, const int8_t* inputOrigin,
         int sx = ox * im2ColParameter->strideX - im2ColParameter->padX;
         int sy = oy * im2ColParameter->strideY - im2ColParameter->padY;
 
-        int sfy = ALIMAX(0, (UP_DIV(-sy, im2ColParameter->dilateX)));
+        int sfy = ALIMAX(0, (UP_DIV(-sy, im2ColParameter->dilateY)));
         int efy = ALIMIN(kh, UP_DIV(ih - sy, im2ColParameter->dilateY));
         int sfx = ALIMAX(0, (UP_DIV(-sx, im2ColParameter->dilateX)));
         int efx = ALIMIN(kw, UP_DIV(iw - sx, im2ColParameter->dilateX));
@@ -329,6 +329,12 @@ ErrorCode ConvolutionInt8Executor::onExecute(const std::vector<Tensor*>& inputs,
     auto ocC4            = UP_DIV(output->channel(), 4);
     auto kernelCountUnit = mIm2ColParamter.kernelCountUnit;
     int count            = width * height;
+    float quantScale[] = {
+        mQuanScale,
+        mQuanScale,
+        mQuanScale,
+        mQuanScale
+    };
 
     // MNN_PRINT("%s, %d, %d, %d,%d->%d,%d\n", layer->layer.layerId, layer->kernelSize[0], layer->kernelSize[1],
     // input->d1, input->d2, output->d1, output->d2);
@@ -339,7 +345,7 @@ ErrorCode ConvolutionInt8Executor::onExecute(const std::vector<Tensor*>& inputs,
         auto srcOrigin = input->host<float>() + input->stride(0) * batchIndex;
         auto dstOrigin = output->host<float>() + output->stride(0) * batchIndex;
 
-        MNNFloat2Int8(srcOrigin, srcCopy, inputTotalSize / 4, &mQuanScale, mAMin, mAMax);
+        MNNFloat2Int8(srcOrigin, srcCopy, inputTotalSize / 4, quantScale, mAMin, mAMax);
         int tileCount = UP_DIV(count, DST_XUNIT);
 
         threadNumber        = std::max(((CPUBackend*)backend())->threadNumber(), 1);

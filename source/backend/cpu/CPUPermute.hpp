@@ -8,8 +8,7 @@
 
 #ifndef CPUPermute_hpp
 #define CPUPermute_hpp
-
-#include "Execution.hpp"
+#include "backend/cpu/CPUBackend.hpp"
 
 namespace MNN {
 class CPUPermute : public Execution {

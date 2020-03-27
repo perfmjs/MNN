@@ -6,7 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "SizeComputer.hpp"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 class SpaceToBatchNDSizeComputer : public SizeComputer {
@@ -29,12 +30,13 @@ public:
         int paddedWidth        = input->width() + paddingData[2] + paddingData[3];
         int outputHeight       = paddedHeight / blockShape->int32s()->data()[0];
         int outputWidth        = paddedWidth / blockShape->int32s()->data()[1];
-
+        output->buffer().type = input->buffer().type;
         output->buffer().dimensions = input->buffer().dimensions;
         output->setLength(0, batch);
         output->setLength(1, input->channel());
         output->setLength(2, outputHeight);
         output->setLength(3, outputWidth);
+        TensorUtils::getDescribe(output)->dimensionFormat = MNN_DATA_FORMAT_NC4HW4;
         return true;
     }
 };

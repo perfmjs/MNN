@@ -6,9 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
-
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 namespace MNN {
 
 class RNNSequenceGRUComputer : public SizeComputer {
@@ -28,16 +27,18 @@ public:
         bool isBidirectionalRNN = rnnParam->isBidirectionalRNN();
         MNN_ASSERT(2 == rnnParam->fwGateWeight()->dims()->size());
         MNN_ASSERT(2 * numUnits == rnnParam->fwGateWeight()->dims()->data()[1]);
+        output->buffer().type = halide_type_of<float>();
+        TensorUtils::getDescribe(output)->dimensionFormat = TensorUtils::getDescribe(input)->dimensionFormat;
         MNN_ASSERT((input->length(2) + numUnits) == rnnParam->fwGateWeight()->dims()->data()[0]);
         if (keepAllOuptuts) {
-            TensorUtils::copyShape(output, input);
+            TensorUtils::copyShape(input, output);
             output->setLength(2, rnnParam->numUnits());
             output->buffer().type = input->buffer().type;
 
             if (isBidirectionalRNN) {
                 MNN_ASSERT(2 == outputs.size());
                 auto outputBW = outputs[1];
-                TensorUtils::copyShape(outputBW, input);
+                TensorUtils::copyShape(input, outputBW);
                 outputBW->setLength(2, rnnParam->numUnits());
                 outputBW->buffer().type = input->buffer().type;
             }
@@ -59,7 +60,6 @@ public:
                 outputBWBuffer.type          = inputBuffer.type;
             }
         }
-
         return true;
     }
 };

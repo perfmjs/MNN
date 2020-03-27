@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 class PermuteComputer : public SizeComputer {
@@ -26,6 +26,8 @@ public:
         for (int i = 0; i < shape->size(); ++i) {
             output->buffer().dim[i].extent = input->buffer().dim[shape->data()[i]].extent;
         }
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+        output->buffer().type = input->buffer().type;
 
         return true;
     }

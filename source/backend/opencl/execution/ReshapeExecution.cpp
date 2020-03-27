@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ReshapeExecution.hpp"
-#include <Macro.h>
-#include "TensorUtils.hpp"
+#include "backend/opencl/execution/ReshapeExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -18,6 +18,7 @@ ReshapeExecution::ReshapeExecution(const std::vector<Tensor *> &inputs, const MN
 #ifdef LOG_VERBOSE
     MNN_PRINT("start ReshapeExecution init !\n");
 #endif
+    mDimType = op->main_as_Reshape()->dimType();
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 #ifdef LOG_VERBOSE
     MNN_PRINT("end ReshapeExecution init !\n");
@@ -26,20 +27,39 @@ ReshapeExecution::ReshapeExecution(const std::vector<Tensor *> &inputs, const MN
 
 ErrorCode ReshapeExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     auto input = inputs[0];
-#ifdef LOG_VERBOSE
     auto output = outputs[0];
-    MNN_PRINT("%d, %d, %d -> %d, %d, %d\n", input->width(), input->height(), input->channel(), output->width(),
+#ifdef LOG_VERBOSE
+    MNN_PRINT("mDimType = %d , %d\n", mDimType, TensorUtils::getDescribe(input)->dimensionFormat);
+    MNN_PRINT("%d, %d, %d, %d -> %d, %d, %d, %d\n", input->batch(), input->width(), input->height(), input->channel(), output->batch(), output->width(),
               output->height(), output->channel());
 #endif
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
     std::string mImageToBufferKernelname;
     std::string mBufferToImageKernelname;
-    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
-        mImageToBufferKernelname = "image_to_nchw_buffer";
-        mBufferToImageKernelname = "nchw_buffer_to_image";
-    } else {
-        mImageToBufferKernelname = "image_to_nhwc_buffer";
-        mBufferToImageKernelname = "nhwc_buffer_to_image";
+    {
+        auto inputFormat  = TensorUtils::getDescribe(input)->dimensionFormat;
+        std::map<MNN_DATA_FORMAT, std::string> formatMap = {
+            {MNN_DATA_FORMAT_NCHW, "image_to_nchw_buffer"},
+            {MNN_DATA_FORMAT_NHWC, "image_to_nhwc_buffer"},
+        };
+        if(inputFormat == MNN_DATA_FORMAT_NC4HW4){
+            mImageToBufferKernelname = formatMap[mDimType];
+        }else{
+            mImageToBufferKernelname = formatMap[inputFormat];
+        }
+    }
+
+    {
+        auto outputFormat = TensorUtils::getDescribe(output)->dimensionFormat;
+        std::map<MNN_DATA_FORMAT, std::string> formatMap = {
+            {MNN_DATA_FORMAT_NCHW, "nchw_buffer_to_image"},
+            {MNN_DATA_FORMAT_NHWC, "nhwc_buffer_to_image"},
+        };
+        if(outputFormat == MNN_DATA_FORMAT_NC4HW4){
+            mBufferToImageKernelname = formatMap[mDimType];
+        }else{
+            mBufferToImageKernelname = formatMap[outputFormat];
+        }
     }
 
     if (mImageToBufferKernel.get() == nullptr) {
@@ -55,8 +75,6 @@ ErrorCode ReshapeExecution::onResize(const std::vector<Tensor *> &inputs, const 
     auto bufferPool = mOpenCLBackend->getBufferPool();
     mInterBuffer    = bufferPool->alloc(input->size());
     bufferPool->recycle(mInterBuffer);
-
-    Tensor *output = outputs[0];
 
     std::vector<int> inputShape  = tensorShapeFormat(input);
     std::vector<int> outputShape = tensorShapeFormat(output);
@@ -79,7 +97,7 @@ ErrorCode ReshapeExecution::onResize(const std::vector<Tensor *> &inputs, const 
         const uint32_t maxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mImageToBufferKernel));
         mLocalWorkSize                  = {16, maxWorkGroupSize / 16};
         for (size_t i = 0; i < mLocalWorkSize.size(); ++i) {
-            mImageToBufferRoundUpGWS[i] = ROUND_UP(inputGlobalWorkSize[i], mLocalWorkSize[i]);
+            mImageToBufferRoundUpGWS[i] = ROUND_UP(inputGlobalWorkSize[i], std::max((uint32_t)1, mLocalWorkSize[i]));
         }
     }
 
@@ -95,7 +113,7 @@ ErrorCode ReshapeExecution::onResize(const std::vector<Tensor *> &inputs, const 
         mBufferToImageKernel.setArg(idx++, openCLImage(outputs[0]));
 
         for (size_t i = 0; i < mLocalWorkSize.size(); ++i) {
-            mBufferToImageRoundUpGWS[i] = ROUND_UP(outputGlobalWorkSize[i], mLocalWorkSize[i]);
+            mBufferToImageRoundUpGWS[i] = ROUND_UP(outputGlobalWorkSize[i], std::max((uint32_t)1, mLocalWorkSize[i]));
         }
     }
     return NO_ERROR;
@@ -125,7 +143,21 @@ ErrorCode ReshapeExecution::onExecute(const std::vector<Tensor *> &inputs, const
     return NO_ERROR;
 }
 
-OpenCLCreatorRegister<TypedCreator<ReshapeExecution>> __reshape_op(OpType_Reshape);
+
+class ReshapeCreator : public OpenCLBackend::Creator {
+public:
+    virtual ~ReshapeCreator() = default;
+    virtual Execution *onCreate(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs,
+                                const MNN::Op *op, Backend *backend) const override {
+        if(inputs[0]->dimensions() == 3 || outputs[0]->dimensions() == 3){
+            MNN_PRINT("reshape not support dimensions == 3 \n");
+            return nullptr;
+        }
+        return new ReshapeExecution(inputs, op, backend);
+    }
+};
+
+OpenCLCreatorRegister<ReshapeCreator> __reshape_op(OpType_Reshape);
 
 } // namespace OpenCL
 } // namespace MNN

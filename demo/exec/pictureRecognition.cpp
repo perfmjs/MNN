@@ -1,5 +1,5 @@
 //
-//  pictureTest.cpp
+//  pictureRecognition.cpp
 //  MNN
 //
 //  Created by MNN on 2018/05/14.
@@ -7,8 +7,8 @@
 //
 
 #include <stdio.h>
-#include "ImageProcess.hpp"
-#include "Interpreter.hpp"
+#include <MNN/ImageProcess.hpp>
+#include <MNN/Interpreter.hpp>
 #define MNN_OPEN_TIME_TRACE
 #include <algorithm>
 #include <fstream>
@@ -16,7 +16,7 @@
 #include <memory>
 #include <sstream>
 #include <vector>
-#include "AutoTime.hpp"
+#include <MNN/AutoTime.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include "stb_image_write.h"
@@ -32,6 +32,9 @@ int main(int argc, const char* argv[]) {
     std::shared_ptr<Interpreter> net(Interpreter::createFromFile(argv[1]));
     ScheduleConfig config;
     config.type  = MNN_FORWARD_AUTO;
+    // BackendConfig bnconfig;
+    // bnconfig.precision = BackendConfig::Precision_Low;
+    // config.backendConfig = &bnconfig;
     auto session = net->createSession(config);
 
     auto input = net->getSessionInput(session, NULL);
@@ -74,15 +77,31 @@ int main(int argc, const char* argv[]) {
         }
         MNN_PRINT("origin size: %d, %d\n", width, height);
         Matrix trans;
-        // Dst -> [0, 1]
-        trans.postScale(1.0 / size_w, 1.0 / size_h);
-        //[0, 1] -> Src
-        trans.postScale(width, height);
+        // Set transform, from dst scale to src, the ways below are both ok
+#ifdef USE_MAP_POINT
+        float srcPoints[] = {
+            0.0f, 0.0f,
+            0.0f, (float)(height-1),
+            (float)(width-1), 0.0f,
+            (float)(width-1), (float)(height-1),
+        };
+        float dstPoints[] = {
+            0.0f, 0.0f,
+            0.0f, (float)(size_h-1),
+            (float)(size_w-1), 0.0f,
+            (float)(size_w-1), (float)(size_h-1),
+        };
+        trans.setPolyToPoly((Point*)dstPoints, (Point*)srcPoints, 4);
+#else
+        trans.setScale((float)(width-1) / (size_w-1), (float)(height-1) / (size_h-1));
+#endif
         ImageProcess::Config config;
         config.filterType = BILINEAR;
         float mean[3]     = {103.94f, 116.78f, 123.68f};
-        ::memcpy(config.mean, mean, sizeof(mean));
         float normals[3] = {0.017f, 0.017f, 0.017f};
+        // float mean[3]     = {127.5f, 127.5f, 127.5f};
+        // float normals[3] = {0.00785f, 0.00785f, 0.00785f};
+        ::memcpy(config.mean, mean, sizeof(mean));
         ::memcpy(config.normal, normals, sizeof(normals));
         config.sourceFormat = RGBA;
         config.destFormat   = BGR;

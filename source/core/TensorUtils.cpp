@@ -6,14 +6,14 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "TensorUtils.hpp"
+#include "core/TensorUtils.hpp"
 #include <math.h>
 #include <stdio.h>
 #include <float.h>
 #include <cmath>
 #include <cstring>
-#include "Backend.hpp"
-#include "Macro.h"
+#include "core/Backend.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 Tensor::InsideDescribe* TensorUtils::getDescribe(const Tensor* tensor) {
@@ -36,17 +36,9 @@ void TensorUtils::setLinearLayout(Tensor* tensor) {
     for (int i = 0; i < buffer.dimensions; ++i) {
         auto index  = buffer.dimensions - i - 1;
         auto extent = buffer.dim[index].extent;
-        switch (buffer.dim[index].flags) {
-            case Tensor::REORDER_4:
-                extent = ROUND_UP(extent, 4);
-                break;
-            case Tensor::REORDER_8:
-                extent = ROUND_UP(extent, 8);
-                break;
-            default:
-                break;
+        if (1 == index && tensor->mDescribe->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
+            extent = ROUND_UP(extent, 4);
         }
-
         buffer.dim[index].stride = size;
         size *= extent;
     }
@@ -72,14 +64,13 @@ void TensorUtils::clearHandleData(Tensor* tensor) {
 
 static const Tensor* createHostPlanar(const Tensor* source) {
     // check
-    bool device = source->buffer().host == NULL && source->buffer().device != 0;
-    bool chunky = false;
-    for (int i = 0; i < source->dimensions(); i++) {
-        if (source->buffer().dim[i].flags) {
-            chunky = true;
-            break;
-        }
+    auto bnType = MNN_FORWARD_CPU;
+    auto tensorBackend = TensorUtils::getDescribe(source)->backend;
+    if(tensorBackend){
+        bnType = tensorBackend->type();
     }
+    bool device = bnType != MNN_FORWARD_CPU;
+    bool chunky = TensorUtils::getDescribe(source)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4;
 
     // no convert needed
     if (!device && !chunky) {
@@ -93,9 +84,6 @@ static const Tensor* createHostPlanar(const Tensor* source) {
             TensorUtils::getDescribe(result)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
         } else {
             TensorUtils::getDescribe(result)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-        }
-        for (int i = 0; i < source->dimensions(); i++) {
-            result->buffer().dim[i].flags = 0;
         }
         TensorUtils::setLinearLayout(result);
 
@@ -139,7 +127,7 @@ static bool equals(const double* pa, const double* pb, size_t size, double toler
         if (std::isinf(va) && std::isinf(vb)) {
             continue;
         }
-        if (va < epsilon && vb < epsilon) {
+        if (fabs(va) < epsilon && fabs(vb) < epsilon) {
             continue;
         }
         float div = overall ? max : fabsf(vb);
@@ -234,12 +222,6 @@ bool TensorUtils::compareTensors(const Tensor* compare, const Tensor* expect, fl
         }
     } else if (b->buffer().type.code == halide_type_float) {
         switch (b->buffer().type.bits) {
-#ifdef __FLT16_EPSILON__
-            case 16:
-                copyTensorToFloat<__fp16>(a, compareValue.data());
-                copyTensorToFloat<__fp16>(b, expectValue.data());
-                break;
-#endif
             case 32:
                 copyTensorToFloat<float>(a, compareValue.data());
                 copyTensorToFloat<float>(b, expectValue.data());

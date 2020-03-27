@@ -6,17 +6,19 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ImageProcess.hpp"
 #include <algorithm>
 #include <map>
-#include "AutoStorage.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "core/AutoStorage.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 #define MNN_OPEN_TIME_TRACE
-#include "AutoTime.hpp"
-#include "ImageBlitter.hpp"
-#include "ImageFloatBlitter.hpp"
-#include "ImageSampler.hpp"
+#include <MNN/AutoTime.hpp>
+#include "cv/ImageBlitter.hpp"
+#include "cv/ImageFloatBlitter.hpp"
+#include "cv/ImageSampler.hpp"
+#include "backend/cpu/CPUTensorConvert.hpp"
+#include <MNN/MNNForwardType.h>
+#include "core/Backend.hpp"
 #define CACHE_SIZE 128
 namespace MNN {
 namespace CV {
@@ -172,12 +174,12 @@ static std::pair<int, int> _computeClip(Point* points, int iw, int ih, const Mat
     return std::make_pair(sta, end);
 }
 
-static ImageFormat _correctImageFormat(const Tensor* tensor, ImageFormat format) {
-    if (TensorUtils::getDescribe(tensor)->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
+static ImageFormat _correctImageFormat(int outputBpp, halide_type_t type, ImageFormat format) {
+    if (outputBpp != 4) {
         return format;
     }
     // TODO, use same judge for uint8 -> float
-    if (tensor->buffer().type.code == halide_type_float) {
+    if (type.code == halide_type_float) {
         return format;
     }
 
@@ -195,26 +197,40 @@ ErrorCode ImageProcess::convert(const uint8_t* source, int iw, int ih, int strid
         return INPUT_DATA_ERROR;
     }
     std::shared_ptr<Tensor> tempTensor;
-    if (destOrigin->host<float>() == nullptr) {
-        tempTensor.reset(Tensor::createHostTensorFromDevice(destOrigin, false), [destOrigin](void* p) {
+    auto ow              = dest->width();
+    auto oh              = dest->height();
+    auto bpp             = dest->channel();
+    auto dimensionFormat = TensorUtils::getDescribe(dest)->dimensionFormat;
+    auto tensorBn = TensorUtils::getDescribe(dest)->backend;
+    auto bnType = MNN_FORWARD_CPU;
+    if(tensorBn){
+        bnType = tensorBn->type();
+    }
+    if (bnType != MNN_FORWARD_CPU) {
+        tempTensor.reset(Tensor::create({1, bpp, oh, ow}, dest->getType(), nullptr, Tensor::CAFFE_C4),[destOrigin] (void* p) {
             auto hostTensor = (Tensor*)p;
             destOrigin->copyFromHostTensor(hostTensor);
             delete hostTensor;
         });
         dest = tempTensor.get();
     }
-    auto ow              = dest->width();
-    auto oh              = dest->height();
-    auto bpp             = dest->channel();
-    auto dimensionFormat = TensorUtils::getDescribe(dest)->dimensionFormat;
-    if (MNN_DATA_FORMAT_NCHW == dimensionFormat) {
-        MNN_ERROR(
-            "Imageprocess don't support CAFFE dimension type, please create tensor with type TENSORFLOW or CAFFE_C4\n");
+    else if (MNN_DATA_FORMAT_NCHW == dimensionFormat) {
+        tempTensor.reset(Tensor::create(dest->shape(), dest->getType(), nullptr, Tensor::CAFFE_C4), [destOrigin](void* p) {
+            auto hostTensor = (Tensor*)p;
+            CPUTensorConverter::convert(hostTensor, destOrigin);
+            delete hostTensor;
+        });
+        dest = tempTensor.get();
     }
+    dimensionFormat = TensorUtils::getDescribe(dest)->dimensionFormat;
     if (dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
         bpp = 4;
     }
+    return convert(source, iw, ih, stride, dest->host<void>(), ow, oh, bpp, ow * bpp, dest->getType());
+}
 
+ErrorCode ImageProcess::convert(const uint8_t* source, int iw, int ih, int stride, void* dest, int ow, int oh,
+                                int outputBpp, int outputStride, halide_type_t type) {
     auto sourceBpp = _getBpp(mInside->config.sourceFormat);
     if (0 == stride) {
         stride = iw * sourceBpp;
@@ -224,7 +240,7 @@ ErrorCode ImageProcess::convert(const uint8_t* source, int iw, int ih, int strid
     auto& config      = mInside->config;
     auto sourceFormat = config.sourceFormat;
     auto destFormat   = config.destFormat;
-    destFormat        = _correctImageFormat(dest, destFormat);
+    destFormat        = _correctImageFormat(outputBpp, type, destFormat);
     auto blitter      = ImageBlitter::choose(sourceFormat, destFormat);
     if (nullptr == blitter) {
         return INPUT_DATA_ERROR;
@@ -234,19 +250,23 @@ ErrorCode ImageProcess::convert(const uint8_t* source, int iw, int ih, int strid
     if (nullptr == sampler) {
         return INPUT_DATA_ERROR;
     }
+    if (0 == outputBpp) {
+        outputBpp = _getBpp(destFormat);
+    }
 
     int tileCount = UP_DIV(ow, CACHE_SIZE);
     Point points[2];
     auto sampleBuffer = (uint8_t*)mInside->cacheBuffer.get();
     auto srcData      = source;
-    auto destBytes    = dest->getType().bytes();
+    auto destBytes    = type.bytes();
+    auto bpp          = outputBpp;
     auto needBlit     = sourceFormat != destFormat;
-    bool isFloat      = dest->getType().code == halide_type_float;
+    bool isFloat      = type.code == halide_type_float;
     //            MNN_PRINT("bpp:%d, destBytes:%d, destFormat:%d, %d, %d\n",bpp, destBytes, ow, oh, dimensionFormat);
 
-    auto blitFloat = ImageFloatBlitter::choose(destFormat, dimensionFormat);
+    auto blitFloat = ImageFloatBlitter::choose(destFormat, bpp);
     for (int dy = 0; dy < oh; ++dy) {
-        auto dstY = dest->host<uint8_t>() + dy * destBytes * ow * bpp;
+        auto dstY = (uint8_t*)dest + dy * destBytes * ow * bpp;
         for (int tIndex = 0; tIndex < tileCount; ++tIndex) {
             int xStart    = tIndex * CACHE_SIZE;
             int count     = std::min(CACHE_SIZE, ow - xStart);
@@ -288,10 +308,14 @@ ErrorCode ImageProcess::convert(const uint8_t* source, int iw, int ih, int strid
                     points[0].fY = dy;
 
                     mTransform.mapPoints(points, 1);
-                    if (sta != 0 || end != 0) {
+                    if (sta != 0 || end < count) {
                         if (sourceBpp > 0) {
-                            ::memset(samplerDest, 0, sourceBpp * sta);
-                            ::memset(samplerDest + end * sourceBpp, 0, (count - end) * sourceBpp);
+                            if (sta > 0) {
+                                ::memset(samplerDest, 0, sourceBpp * sta);
+                            }
+                            if (end < count) {
+                                ::memset(samplerDest + end * sourceBpp, 0, (count - end) * sourceBpp);
+                            }
                         } else {
                             // TODO, Only support NV12 / NV21
                             ::memset(samplerDest, 0, count);

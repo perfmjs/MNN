@@ -6,16 +6,16 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ConvolutionFloatFactory.h"
-#include "CPUConvolutionDepthwise.hpp"
-#include "ConvOpt.h"
-#include "Convolution1x1Strassen.hpp"
-#include "Convolution3x3.hpp"
-#include "ConvolutionGroup.hpp"
-#include "ConvolutionIntFactory.hpp"
-#include "ConvolutionTiledExecutor.hpp"
-#include "ConvolutionWinograd.hpp"
-#include "Macro.h"
+#include "backend/cpu/compute/ConvolutionFloatFactory.h"
+#include "backend/cpu/CPUConvolutionDepthwise.hpp"
+#include "backend/cpu/compute/ConvOpt.h"
+#include "backend/cpu/compute/Convolution1x1Strassen.hpp"
+#include "backend/cpu/compute/Convolution3x3.hpp"
+#include "backend/cpu/compute/ConvolutionGroup.hpp"
+#include "backend/cpu/compute/ConvolutionIntFactory.hpp"
+#include "backend/cpu/compute/ConvolutionTiledExecutor.hpp"
+#include "backend/cpu/compute/ConvolutionWinograd.hpp"
+#include "core/Macro.h"
 namespace MNN {
 
 static Execution* _createUnit(const Tensor* input, const Tensor* output, Backend* backend,
@@ -37,10 +37,12 @@ static Execution* _createUnit(const Tensor* input, const Tensor* output, Backend
     if (unit <= 1) {
         return new ConvolutionTiledExecutor(common, backend, originWeight, originWeightSize, bias, biasSize);
     }
+#if defined(MNN_BUILD_FOR_ANDROID) || defined(__APPLE__)
     // MNN_PRINT("ic=%d, channel=%d, kx=%d, unit=%d\n", input->channel(), output->channel(), common->kernelX(), unit);
     if (common->kernelY() == 3 && common->kernelX() == 3 && unit <= 4) {
         return new Convolution3x3(common, backend, originWeight, originWeightSize, bias, biasSize);
     }
+#endif
     return new ConvolutionWinograd(common, input, output, backend, originWeight, originWeightSize, bias, biasSize,
                                    unit);
 }
@@ -48,15 +50,15 @@ static Execution* _createUnit(const Tensor* input, const Tensor* output, Backend
 Execution* ConvolutionFloatFactory::create(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
                                            const MNN::Op* op, Backend* backend) {
     auto conv2d = op->main_as_Convolution2D();
-    if (inputs.size() == 3) {
+    if (inputs.size() > 1) {
         // Use Input Weight and Bias
         return new ConvolutionTiledExecutorMultiInput(conv2d->common(), backend);
     }
     const float* originWeight = nullptr;
     size_t originWeightSize   = 0;
-    std::shared_ptr<ConvolutionIntFactory::Int8Common> quanCommon;
+    std::shared_ptr<ConvolutionCommon::Int8Common> quanCommon;
     if (nullptr != conv2d->quanParameter()) {
-        quanCommon = ConvolutionIntFactory::load(conv2d->quanParameter());
+        quanCommon = ConvolutionCommon::load(conv2d->quanParameter());
         if (nullptr == quanCommon) {
             MNN_ERROR("Memory not Enough, can't extract IDST Convolution: %s \n", op->name()->c_str());
             return nullptr;
@@ -67,6 +69,9 @@ Execution* ConvolutionFloatFactory::create(const std::vector<Tensor*>& inputs, c
         // Back to float
         originWeight     = quanCommon->weightFloat.get();
         originWeightSize = quanCommon->weightFloat.size();
+    } else if (nullptr == conv2d->weight() || nullptr == conv2d->bias()) {
+        MNN_ERROR("%s has no weight or bias. The model may be benchmark model, please revert the weight/bias firstly\n", op->name()->c_str());
+        return nullptr;
     }
     auto common = conv2d->common();
     if (nullptr == originWeight) {

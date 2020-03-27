@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#import "MetalBackend.hpp"
+#import "backend/metal/MetalBackend.hpp"
 #import <mutex>
-#import "MNNMetalContext.h"
-#import "Macro.h"
-#import "TensorUtils.hpp"
+#import "backend/metal/MNNMetalContext.h"
+#import "core/Macro.h"
+#import "core/TensorUtils.hpp"
 
 #if MNN_METAL_ENABLED
 
@@ -70,6 +70,7 @@ bool MetalBackend::onAcquireBuffer(const Tensor *_tensor, StorageType storageTyp
             auto iter = mReusableBuffers.lower_bound(size);
             if (iter != mReusableBuffers.end()) {
                 tensor->buffer().device = iter->second;
+                mDynamicBuffers.insert(std::make_pair((void*)iter->second, iter->first));
                 mReusableBuffers.erase(iter);
                 return true;
             }
@@ -135,6 +136,15 @@ bool MetalBackend::onClearBuffer() {
     mReusableBuffers.clear();
     return true;
 }
+std::pair<float, bool> MetalBackend::onMeasure(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
+                                              const MNN::Op* op) {
+    auto map  = getCreatorMap();
+    auto iter = map->find(op->type());
+    if (iter == map->end()) {
+        return std::make_pair(0.0f, false);
+    }
+    return std::make_pair(0.05f, true);
+}
 
 Execution *MetalBackend::onCreate(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs,
                                   const Op *op) {
@@ -154,7 +164,7 @@ Execution *MetalBackend::onCreate(const std::vector<Tensor *> &inputs, const std
     }
     auto exe = iter->second->onCreate(inputs, op, this);
     if (NULL == exe) {
-        MNN_PRINT("The Creator Don't support type %d, %s\n", op->type(), op->name()->c_str());
+        MNN_PRINT("The Creator Don't support type %d, %s\n", op->type(), op->name() ? op->name()->c_str() : "");
         return NULL;
     }
     return exe;
@@ -436,16 +446,21 @@ void MetalBackend::onCopyBuffer(const Tensor *src, const Tensor *dst, id<MTLComp
     }
 }
 
+
 class MetalBackendCreator : public BackendCreator {
     virtual Backend *onCreate(const Backend::Info &info) const {
         static std::once_flag s_flag;
         std::call_once(s_flag, [&]() { registerMetalOps(); });
-        return new MetalBackend;
+        auto bn = new MetalBackend;
+        if (nullptr == bn->context()) {
+            return nullptr;
+        }
+        return bn;
     }
 };
 
 void registerMetalBackendCreator() {
-    MNNInsertExtraBackendCreator(MNN_FORWARD_METAL, new MetalBackendCreator);
+    MNNInsertExtraBackendCreator(MNN_FORWARD_METAL, new MetalBackendCreator, true);
 }
 } // namespace MNN
 #else

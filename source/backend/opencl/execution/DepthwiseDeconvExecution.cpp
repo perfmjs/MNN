@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "DepthwiseDeconvExecution.hpp"
-#include <Macro.h>
-#include "TensorUtils.hpp"
+#include "backend/opencl/execution/DepthwiseDeconvExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -43,11 +43,15 @@ DepthwiseDeconvExecution::DepthwiseDeconvExecution(const std::vector<Tensor *> &
     cl::Buffer filterBufferCL(mOpenCLBackend->getOpenCLRuntime()->context(), CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
                               filterBuffer->size());
     filterBuffer->buffer().device = (uint64_t)(&filterBufferCL);
+    cl_int error;
     auto ptrCL = mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueMapBuffer(filterBufferCL, true, CL_MAP_WRITE,
-                                                                                     0, filterBuffer->size());
-    ::memcpy(ptrCL, filterDataPtr, filterBuffer->size());
+                                                                                     0, filterBuffer->size(), nullptr, nullptr, &error);
+    if(nullptr != ptrCL && error == CL_SUCCESS){
+        ::memcpy(ptrCL, filterDataPtr, filterBuffer->size());
+    }else{
+        MNN_ERROR("Map error ptrCL == nullptr \n");
+    }
     mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(filterBufferCL, ptrCL);
-
     mOpenCLBackend->onAcquireBuffer(mFilter.get(), Backend::STATIC);
 
     MNN::OpenCL::ImageBufferConvertor imageBufferConvertor{mOpenCLBackend->getOpenCLRuntime()};

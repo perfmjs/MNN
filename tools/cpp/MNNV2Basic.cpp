@@ -24,15 +24,34 @@
 #else
 #include <sys/time.h>
 #endif
-#include "AutoTime.hpp"
-#include "Interpreter.hpp"
-#include "MNNDefine.h"
-#include "Tensor.hpp"
-#include "revertMNNModel.hpp"
+#include <MNN/MNNDefine.h>
+#include <MNN/AutoTime.hpp>
+#include <MNN/Interpreter.hpp>
+#include <MNN/Tensor.hpp>
+#include <core/Backend.hpp>
+#include <core/TensorUtils.hpp>
 
 //#define FEED_INPUT_NAME_VALUE
 
 using namespace MNN;
+
+#define DUMP_NUM_DATA(type)                          \
+    auto data = tensor->host<type>();                \
+    for (int z = 0; z < outside; ++z) {              \
+        for (int x = 0; x < width; ++x) {            \
+            outputOs << data[x + z * width] << "\t"; \
+        }                                            \
+        outputOs << "\n";                            \
+    }
+
+#define DUMP_CHAR_DATA(type)                                           \
+    auto data = tensor->host<type>();                                  \
+    for (int z = 0; z < outside; ++z) {                                \
+        for (int x = 0; x < width; ++x) {                              \
+            outputOs << static_cast<int>(data[x + z * width]) << "\t"; \
+        }                                                              \
+        outputOs << "\n";                                              \
+    }
 
 static void dumpTensor2File(const Tensor* tensor, const char* file) {
     std::ofstream outputOs(file);
@@ -44,34 +63,22 @@ static void dumpTensor2File(const Tensor* tensor, const char* file) {
         width = tensor->length(dimension - 1);
     }
 
-    int outside = tensor->elementSize() / width;
+    const int outside = tensor->elementSize() / width;
 
-    if (type.code == halide_type_float) {
-        auto data = tensor->host<float>();
-        for (int z = 0; z < outside; ++z) {
-            for (int x = 0; x < width; ++x) {
-                outputOs << data[x + z * width] << "\t";
-            }
-            outputOs << "\n";
-        }
+    const auto dataType  = type.code;
+    const auto dataBytes = type.bytes();
+
+    if (dataType == halide_type_float) {
+        DUMP_NUM_DATA(float);
     }
-    if (type.code == halide_type_int && type.bytes() == 4) {
-        auto data = tensor->host<int32_t>();
-        for (int z = 0; z < outside; ++z) {
-            for (int x = 0; x < width; ++x) {
-                outputOs << data[x + z * width] << "\t";
-            }
-            outputOs << "\n";
-        }
+    if (dataType == halide_type_int && dataBytes == 4) {
+        DUMP_NUM_DATA(int32_t);
     }
-    if (type.code == halide_type_uint && type.bytes() == 1) {
-        auto data = tensor->host<uint8_t>();
-        for (int z = 0; z < outside; ++z) {
-            for (int x = 0; x < width; ++x) {
-                outputOs << (int)data[x + z * width] << "\t";
-            }
-            outputOs << "\n";
-        }
+    if (dataType == halide_type_uint && dataBytes == 1) {
+        DUMP_CHAR_DATA(uint8_t);
+    }
+    if (dataType == halide_type_int && dataBytes == 1) {
+        DUMP_CHAR_DATA(int8_t);
     }
 }
 
@@ -81,9 +88,9 @@ static inline int64_t getTimeInUs() {
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
-    uint64_t sec = now.QuadPart / freq.QuadPart;
+    uint64_t sec  = now.QuadPart / freq.QuadPart;
     uint64_t usec = (now.QuadPart % freq.QuadPart) * 1000000 / freq.QuadPart;
-    time = sec * 1000000 + usec;
+    time          = sec * 1000000 + usec;
 #else
     struct timeval tv;
     gettimeofday(&tv, nullptr);
@@ -95,7 +102,7 @@ static inline int64_t getTimeInUs() {
 static int test_main(int argc, const char* argv[]) {
     if (argc < 2) {
         MNN_PRINT("========================================================================\n");
-        MNN_PRINT("Arguments: model.MNN numThread runTimes saveAllTensors forwardType\n");
+        MNN_PRINT("Arguments: model.MNN runTimes saveAllTensors forwardType numberThread size\n");
         MNN_PRINT("========================================================================\n");
         return -1;
     }
@@ -136,8 +143,8 @@ static int test_main(int argc, const char* argv[]) {
 
     // input dims
     std::vector<int> inputDims;
-    if (argc > 5) {
-        std::string inputShape(argv[5]);
+    if (argc > 6) {
+        std::string inputShape(argv[6]);
         const char* delim = "x";
         std::ptrdiff_t p1 = 0, p2;
         while (1) {
@@ -157,23 +164,17 @@ static int test_main(int argc, const char* argv[]) {
     MNN_PRINT("\n");
 
     int numThread = 4;
-    if (argc > 6) {
-        numThread = ::atoi(argv[6]);
+    if (argc > 5) {
+        numThread = ::atoi(argv[5]);
     }
-
-    auto revertor = std::unique_ptr<Revert>(new Revert(fileName));
-    revertor->initialize();
-    auto modelBuffer = revertor->getBuffer();
-    auto bufferSize  = revertor->getBufferSize();
 
     // create net
     MNN_PRINT("Open Model %s\n", fileName);
     std::shared_ptr<MNN::Interpreter> net =
-        std::shared_ptr<MNN::Interpreter>(MNN::Interpreter::createFromBuffer(modelBuffer, bufferSize));
+        std::shared_ptr<MNN::Interpreter>(MNN::Interpreter::createFromFile(fileName));
     if (nullptr == net) {
         return 0;
     }
-    revertor.reset();
 
     // create session
     MNN::ScheduleConfig config;
@@ -205,7 +206,19 @@ static int test_main(int argc, const char* argv[]) {
     auto allInput = net->getSessionInputAll(session);
     for (auto& iter : allInput) {
         auto size = iter.second->size();
-        auto ptr  = iter.second->host<void>();
+        if (size <= 0) {
+            continue;
+        }
+        auto bnType   = MNN_FORWARD_CPU;
+        auto tensorBn = TensorUtils::getDescribe(iter.second)->backend;
+        if (tensorBn) {
+            bnType = tensorBn->type();
+        }
+        // memory is fp16, but size == element * sizeof(float)
+        if (bnType == MNN_FORWARD_CPU_EXTENSION) {
+            size /= 2;
+        }
+        auto ptr = iter.second->host<void>();
         std::shared_ptr<MNN::Tensor> tempTensor;
         if (nullptr == ptr) {
             tempTensor = std::shared_ptr<MNN::Tensor>(MNN::Tensor::createHostTensorFromDevice(iter.second, false),
@@ -275,11 +288,19 @@ static int test_main(int argc, const char* argv[]) {
         std::ifstream input(fileName.str().c_str());
 
         if (givenTensor.getType().code == halide_type_int) {
-            auto size = givenTensor.elementSize();
-            if (givenTensor.getType().bytes() == 4) {
+            auto size           = givenTensor.elementSize();
+            const auto bytesLen = givenTensor.getType().bytes();
+            if (bytesLen == 4) {
                 auto inputData = givenTensor.host<int32_t>();
                 for (int i = 0; i < size; ++i) {
                     input >> inputData[i];
+                }
+            } else if (bytesLen == 1) {
+                auto inputData = givenTensor.host<int8_t>();
+                int pixel      = 0;
+                for (int i = 0; i < size; ++i) {
+                    input >> pixel;
+                    inputData[i] = static_cast<int8_t>(pixel);
                 }
             }
         } else if (givenTensor.getType().code == halide_type_uint) {
@@ -298,6 +319,7 @@ static int test_main(int argc, const char* argv[]) {
             auto size      = givenTensor.elementSize();
             for (int i = 0; i < size; ++i) {
                 input >> inputData[i];
+                // inputData[i] = 1.0f;
             }
         }
         inputTensor->copyFromHostTensor(&givenTensor);
@@ -322,8 +344,8 @@ static int test_main(int argc, const char* argv[]) {
                         opCopyName[j] = '_';
                     }
                 }
-                MNN_PRINT("Dump %s Input, %d, %d X %d X %d X %d\n", opName.c_str(), i, tensor->width(), tensor->height(),
-                          tensor->channel(), tensor->batch());
+                MNN_PRINT("Dump %s Input, %d, %d X %d X %d X %d\n", opName.c_str(), i, tensor->width(),
+                          tensor->height(), tensor->channel(), tensor->batch());
                 outputFileName << "output/Input_" << opCopyName << "_" << i;
                 dumpTensor2File(expectTensor, outputFileName.str().c_str());
                 delete expectTensor;
@@ -332,7 +354,7 @@ static int test_main(int argc, const char* argv[]) {
         };
         MNN::TensorCallBack callBack = [&](const std::vector<MNN::Tensor*>& ntensors, const std::string& opName) {
             for (int i = 0; i < ntensors.size(); ++i) {
-                auto ntensor      = ntensors[i];
+                auto ntensor    = ntensors[i];
                 auto outDimType = ntensor->getDimensionType();
                 if (inputTensor->getType().code == halide_type_uint || inputTensor->getType().code == halide_type_int) {
                     outDimType = Tensor::TENSORFLOW;
@@ -365,14 +387,12 @@ static int test_main(int argc, const char* argv[]) {
 
     // save output
     auto outputTensor = net->getSessionOutput(session, NULL);
-    if (outputTensor->size() <= 0) {
-        MNN_ERROR("Output not available\n");
-        return 0;
-    }
     MNN::Tensor expectTensor(outputTensor, outputTensor->getDimensionType());
     outputTensor->copyToHostTensor(&expectTensor);
     auto outputFile = pwd + "output.txt";
-    dumpTensor2File(&expectTensor, outputFile.c_str());
+    if (outputTensor->size() > 0) {
+        dumpTensor2File(&expectTensor, outputFile.c_str());
+    }
 
     // benchmark. for CPU, op time means calc duration; for others, op time means schedule duration.
     {
@@ -427,8 +447,9 @@ static int test_main(int argc, const char* argv[]) {
 
             std::sort(allOpsTimes.begin(), allOpsTimes.end());
             for (auto iter : allOpsTimes) {
-                MNN_PRINT("%*s run %d average cost %f ms, %.3f %%, FlopsRate: %.3f %%\n", 50, iter.second.first.c_str(), runTime,
-                          iter.first / (float)runTime, iter.first / sum * 100.0f, iter.second.second / sumFlops * 100.0f);
+                MNN_PRINT("%*s run %d average cost %f ms, %.3f %%, FlopsRate: %.3f %%\n", 50, iter.second.first.c_str(),
+                          runTime, iter.first / (float)runTime, iter.first / sum * 100.0f,
+                          iter.second.second / sumFlops * 100.0f);
             }
             MNN_PRINT("Avg= %f ms, min= %f ms, max= %f ms\n", sum / (float)t, *minTime, *maxTime);
         }

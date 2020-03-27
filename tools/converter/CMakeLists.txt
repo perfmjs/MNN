@@ -1,75 +1,62 @@
-cmake_minimum_required(VERSION 3.0)
+IF(MNN_BUILD_CONVERTER)
+  set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS_ORIGIN})
+  set(CMAKE_C_FLAGS ${CMAKE_C_FLAGS_ORIGIN})
+  SET( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/../../)
+  option(TF_CONVERT_ORIGIN "Fall Back to Origin Model Converter" OFF)
+  option(TFMODEL_OPTIMIZE "Enable tensorflow model optimizer" OFF)
+  IF(MNN_PORTABLE_BUILD)
+    SET(Protobuf_USE_STATIC_LIBS ON)
+  ENDIF()
+  find_package(Protobuf REQUIRED)
+  if (${CMAKE_VERSION} VERSION_LESS "3.6.0")
+      set(Protobuf_LIBRARIES ${PROTOBUF_LIBRARIES})
+      set(Protobuf_INCLUDE_DIRS ${PROTOBUF_INCLUDE_DIRS})
+  endif()
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/include/)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/source/tflite/schema/)
+  include_directories(${Protobuf_INCLUDE_DIRS})
+  SET(MNN_CONVERTER_BACKENDS_TARGETS "")
+  SET(MNN_CONVERTER_BACKENDS_OBJECTS "")
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/include)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/source/tflite/schema)
+  include_directories(${CMAKE_CURRENT_BINARY_DIR})
+  include(${CMAKE_CURRENT_LIST_DIR}/source/tensorflow/CMakeLists.txt)
+  include(${CMAKE_CURRENT_LIST_DIR}/source/onnx/CMakeLists.txt)
+  include(${CMAKE_CURRENT_LIST_DIR}/source/caffe/CMakeLists.txt)
+  include(${CMAKE_CURRENT_LIST_DIR}/source/MNN/CMakeLists.txt)
+  include(${CMAKE_CURRENT_LIST_DIR}/source/optimizer/CMakeLists.txt)
+  include(${CMAKE_CURRENT_LIST_DIR}/source/tflite/CMakeLists.txt)
 
-project(MNNConverter)
-
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 11)
-
-set(PROJECT_VERSION "0.0.0.1")
-
-configure_file(
-    ./CONFIGURECONVERT.h.in
-    ./CONFIGURECONVERT.h
-)
-
-# -----------debug or no-----------
-set(CMAKE_BUILD_TYPE debug)
-option(MNN_CONVERT_DEBUG "Enable MNN CONVERT DEBUG" ON)
-if(MNN_CONVERT_DEBUG)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-else()
-    add_definitions(-DNDEBUG)
-endif()
-
-# -----------Enable tensorflow model optimizer or no-----------
-option(TFMODEL_OPTIMIZE "Enable tensorflow model optimizer" OFF)
-if(TFMODEL_OPTIMIZE)
-    add_definitions(-DTFMODEL_OPTIMIZE)
-endif()
-
-# -----------find protobuf lib-----------
-find_package(Protobuf REQUIRED)
-if (${CMAKE_VERSION} VERSION_LESS "3.6.0")
-    set(Protobuf_LIBRARIES ${PROTOBUF_LIBRARIES})
-    set(Protobuf_INCLUDE_DIRS ${PROTOBUF_INCLUDE_DIRS})
-endif()
-
-# -----------set path-----------
-set(SRC_PATH source)
-set(IR_PATH ${SRC_PATH}/IR)
-set(COMMON_PATH ${SRC_PATH}/common)
-set(CAFFE_PATH ${SRC_PATH}/caffe)
-set(TENSORFLOW_PATH ${SRC_PATH}/tensorflow)
-set(ONNX_PATH ${SRC_PATH}/onnx)
-set(TFLITE_PATH ${SRC_PATH}/tflite)
-set(MNN_PATH ${SRC_PATH}/MNN)
-set(OPTIMIZER_PATH ${SRC_PATH}/optimizer)
-set(INCLUDE_PATH ${SRC_PATH}/include)
-
-# -----------set include path-----------
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
-include_directories(${INCLUDE_PATH})
-include_directories(${IR_PATH})
-include_directories(${TFLITE_PATH}/schema)
-
-add_subdirectory(${TENSORFLOW_PATH})
-add_subdirectory(${ONNX_PATH})
-add_subdirectory(${CAFFE_PATH})
-add_subdirectory(${MNN_PATH})
-add_subdirectory(${OPTIMIZER_PATH})
-add_subdirectory(${TFLITE_PATH})
-
-file(GLOB COMMON_SRC ${COMMON_PATH}/*)
-add_library(COMMON_LIB STATIC ${COMMON_SRC})
-
-add_executable(MNNDump2Json.out ${SRC_PATH}/MNNDump2Json.cpp)
-
-include_directories(${SRC_PATH})
-set(COMMAND_SRC
-    ${SRC_PATH}/cli.cpp
-    ${SRC_PATH}/config.cpp
-)
-
-add_executable(MNNConvert ${SRC_PATH}/MNNConverter.cpp ${COMMAND_SRC})
-target_link_libraries(MNNConvert tensorflow caffe onnx MNN tflite optimizer COMMON_LIB ${Protobuf_LIBRARIES})
+  file(GLOB COMMON_SRC ${CMAKE_CURRENT_LIST_DIR}/source/common/*.cpp)
+  add_executable(MNNDump2Json ${CMAKE_CURRENT_LIST_DIR}/source/MNNDump2Json.cpp)
+  add_dependencies(MNNDump2Json MNN_SCHEMA_GEN)
+  add_executable(MNNConvert
+    ${CMAKE_CURRENT_LIST_DIR}/source/MNNConverter.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/source/cli.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/source/config.cpp
+  )
+  IF(MNN_BUILD_SHARED_LIBS)
+    add_library(MNNConvertDeps SHARED ${COMMON_SRC} ${MNN_CONVERTER_BACKENDS_OBJECTS} ${CMAKE_SOURCE_DIR}/3rd_party/flatbuffers/src/util.cpp)
+    add_dependencies(MNNConvertDeps MNN)
+  ELSE()
+    add_library(MNNConvertDeps STATIC ${COMMON_SRC} ${MNN_CONVERTER_BACKENDS_OBJECTS} ${CMAKE_SOURCE_DIR}/3rd_party/flatbuffers/src/util.cpp)
+  ENDIF()
+  
+  
+  IF(NOT MNN_BUILD_SHARED_LIBS)
+    target_link_libraries(MNNConvertDeps PUBLIC ${Protobuf_LIBRARIES})
+    if(APPLE)
+        target_link_libraries(MNNConvert -Wl,-all_load MNNConvertDeps ${MNN_DEPS} -Wl,-noall_load)
+    elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_link_libraries(MNNConvert -Wl,--whole-archive MNNConvertDeps ${MNN_DEPS} -Wl,--no-whole-archive)
+    ELSE()
+        target_link_libraries(MNNConvert MNNConvertDeps)
+    endif()
+  ELSE()
+    target_link_libraries(MNNConvertDeps PUBLIC ${MNN_DEPS} ${Protobuf_LIBRARIES})
+    add_executable(TestConvertResult ${CMAKE_CURRENT_LIST_DIR}/source/TestConvertResult.cpp)
+    target_link_libraries(TestConvertResult MNNConvertDeps)
+    target_link_libraries(MNNConvert MNNConvertDeps)
+  ENDIF()
+  add_dependencies(MNNConvert MNN_SCHEMA_GEN)
+ENDIF()

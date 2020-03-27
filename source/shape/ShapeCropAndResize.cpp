@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 
@@ -23,13 +23,6 @@ class CropAndResizeComputer : public SizeComputer {
         const Tensor* box_index = inputs[2];
         // The shape of 'crop_size' is [2].
         Tensor* crop_size = inputs[3];
-        std::shared_ptr<Tensor> cropSizeTemp;
-
-        // copy data from device to host if needed
-        if (!crop_size->host<int32_t>() && crop_size->deviceId()) {
-            cropSizeTemp.reset(Tensor::createHostTensorFromDevice(crop_size, true));
-            crop_size = cropSizeTemp.get();
-        }
 
         MNN_ASSERT(4 == image->buffer().dimensions);
 
@@ -61,10 +54,12 @@ class CropAndResizeComputer : public SizeComputer {
         outputs[0]->buffer().dim[1].extent = crop_height;
         outputs[0]->buffer().dim[2].extent = crop_width;
         outputs[0]->buffer().dim[3].extent = depth;
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+        outputs[0]->buffer().type = inputs[0]->getType();
 
         return true;
     }
 };
 
-REGISTER_SHAPE(CropAndResizeComputer, OpType_CropAndResize);
+REGISTER_SHAPE_INPUTS(CropAndResizeComputer, OpType_CropAndResize, {3});
 } // namespace MNN

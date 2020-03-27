@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
@@ -22,13 +22,11 @@ class FillComputer : public SizeComputer {
         output0->buffer().type = inputs[1]->buffer().type;
         for (int i = 0; i < input0->buffer().dim[0].extent; i++) {
             output0->buffer().dim[i].extent = input0->host<int32_t>()[i];
-            output0->buffer().dim[i].flags = 0;
         }
-        TensorUtils::getDescribe(output0)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
-
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[1])->dimensionFormat;
         return true;
     }
 };
 
-REGISTER_SHAPE(FillComputer, OpType_Fill);
+REGISTER_SHAPE_INPUTS(FillComputer, OpType_Fill, {0});
 } // namespace MNN

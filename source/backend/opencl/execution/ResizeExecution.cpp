@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "execution/ResizeExecution.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-#include "core/OpenCLRunningUtils.hpp"
+#include "backend/opencl/execution/ResizeExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "backend/opencl/core/OpenCLRunningUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -94,7 +94,7 @@ ErrorCode ResizeExecution::onExecute(const std::vector<Tensor *> &inputs, const 
     std::vector<uint32_t> roundUpGroupWorkSize(lws.size());
     for (size_t i = 0; i < lws.size(); ++i) {
         if (lws[i] != 0) {
-            roundUpGroupWorkSize[i] = ROUND_UP(gws[i], lws[i]);
+            roundUpGroupWorkSize[i] = ROUND_UP(gws[i], std::max((uint32_t)1, lws[i]));
         }
     }
     auto error = runtime->commandQueue().enqueueNDRangeKernel(

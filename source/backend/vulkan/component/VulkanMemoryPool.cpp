@@ -6,7 +6,7 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanMemoryPool.hpp"
+#include "backend/vulkan/component/VulkanMemoryPool.hpp"
 namespace MNN {
 VulkanMemory::VulkanMemory(const VulkanDevice& dev, const VkMemoryAllocateInfo& info) : mDevice(dev) {
     CALL_VK(mDevice.allocMemory(mMemory, info));
@@ -17,9 +17,10 @@ VulkanMemory::~VulkanMemory() {
     mDevice.freeMemory(mMemory);
 }
 
-VulkanMemoryPool::VulkanMemoryPool(const VulkanDevice& dev) : mDevice(dev) {
+VulkanMemoryPool::VulkanMemoryPool(const VulkanDevice& dev, bool permitFp16) : mDevice(dev) {
     mDevice.getPhysicalDeviceMemoryProperties(mPropty);
     mFreeBuffers.resize(mPropty.memoryTypeCount);
+    mPermitFp16 = permitFp16;
 }
 VulkanMemoryPool::~VulkanMemoryPool() {
 }

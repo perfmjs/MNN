@@ -6,14 +6,12 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 
-// –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 // Size Computer
-// –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 class ProposalComputer : public SizeComputer {
     virtual bool onComputeSize(const MNN::Op *op, const std::vector<Tensor *> &inputs,
                                const std::vector<Tensor *> &outputs) const override {
@@ -34,6 +32,8 @@ class ProposalComputer : public SizeComputer {
             roi.dim[1].extent = 1;
             roi.dim[0].extent = proposal->afterNmsTopN() * inputs[0]->buffer().dim[0].extent;
         }
+        output.type = halide_type_of<float>();
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
 
         return true;
     }

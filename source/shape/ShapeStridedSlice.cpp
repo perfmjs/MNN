@@ -8,11 +8,11 @@
 
 #include <algorithm>
 #include <array>
-#include "CPUStridedSlice.hpp"
-#include "CommonOptFunction.h"
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "backend/cpu/CPUStridedSlice.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 class StridedSliceComputer : public SizeComputer {
@@ -21,11 +21,12 @@ public:
                                const std::vector<Tensor *> &outputs) const override {
         MNN_ASSERT(4 == inputs.size());
         MNN_ASSERT(1 == outputs.size());
-        const std::string name = op->name()->c_str();
-
+        
         Tensor *input            = inputs[0];
         const int inputDimension = input->buffer().dimensions;
-        MNN_ASSERT(inputDimension > 0);
+        if (inputDimension <= 0) {
+            return false;
+        }
         if (inputDimension >= 5) {
             MNN_ERROR("Error for StridedSliceComputer: inputDimension>=5: %d\n", inputDimension);
             return false;
@@ -163,12 +164,11 @@ public:
 
         for (int i = 0; i < outputShapeShrinked.size(); i++) {
             output->buffer().dim[i].extent = outputShapeShrinked[i];
-            output->buffer().dim[i].flags  = 0;
         }
-
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
         return true;
     }
 };
 
-REGISTER_SHAPE(StridedSliceComputer, OpType_StridedSlice);
+REGISTER_SHAPE_INPUTS(StridedSliceComputer, OpType_StridedSlice, (std::vector<int>{1,2,3}));
 } // namespace MNN

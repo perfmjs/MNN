@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanPermute.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/vulkan/execution/VulkanPermute.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 struct GpuParam {
@@ -46,10 +46,8 @@ ErrorCode VulkanPermute::onEncode(const std::vector<Tensor*>& inputs, const std:
     MNN_ASSERT(output->buffer().dimensions == 4);
     // acquire permute mid buffer
     TensorUtils::copyShape(input, &mTempSource);
-    mTempSource.buffer().dim[1].flags                       = 0;
     TensorUtils::getDescribe(&mTempSource)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
     TensorUtils::copyShape(output, &mTempDest);
-    mTempDest.buffer().dim[1].flags                       = 0;
     TensorUtils::getDescribe(&mTempDest)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
     backend()->onAcquireBuffer(&mTempDest, Backend::DYNAMIC);
     backend()->onAcquireBuffer(&mTempSource, Backend::DYNAMIC);
@@ -101,7 +99,7 @@ ErrorCode VulkanPermute::onEncode(const std::vector<Tensor*>& inputs, const std:
 
 class VulkanPermuteCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanPermute(op, bn);
     }
 };

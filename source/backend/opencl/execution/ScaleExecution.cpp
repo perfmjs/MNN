@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "execution/ScaleExecution.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-#include "core/OpenCLRunningUtils.hpp"
+#include "backend/opencl/execution/ScaleExecution.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "backend/opencl/core/OpenCLRunningUtils.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -26,10 +26,15 @@ ScaleExecution::ScaleExecution(const std::vector<Tensor *> &inputs, const MNN::O
     const float *scaleDataPtr = scaleParams->scaleData()->data();
     cl::Buffer scaleBuffer(openclBackend->getOpenCLRuntime()->context(), CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
                            UP_DIV(scaleSize, 4) * 4 * sizeof(float));
+    cl_int error;
     auto scalePtrCL = openclBackend->getOpenCLRuntime()->commandQueue().enqueueMapBuffer(
-        scaleBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(scaleSize) * sizeof(float));
-    ::memset(scalePtrCL, 0, ALIGN_UP4(scaleSize) * sizeof(float));
-    ::memcpy(scalePtrCL, scaleDataPtr, scaleSize * sizeof(float));
+        scaleBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(scaleSize) * sizeof(float), nullptr, nullptr, &error);
+    if(nullptr != scalePtrCL && error == CL_SUCCESS){
+        ::memset(scalePtrCL, 0, ALIGN_UP4(scaleSize) * sizeof(float));
+        ::memcpy(scalePtrCL, scaleDataPtr, scaleSize * sizeof(float));
+    }else{
+        MNN_ERROR("Map error scalePtrCL == nullptr \n");
+    }
     openclBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(scaleBuffer, scalePtrCL);
 
     mScale.reset(Tensor::createDevice<float>({1, 1, 1, scaleSize}));
@@ -44,12 +49,16 @@ ScaleExecution::ScaleExecution(const std::vector<Tensor *> &inputs, const MNN::O
         const float *biasDataPtr = scaleParams->biasData()->data();
         cl::Buffer biasBuffer(openclBackend->getOpenCLRuntime()->context(), CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
                               UP_DIV(biasSize, 4) * 4 * sizeof(float));
+        cl_int error;
         auto biasPtrCL = openclBackend->getOpenCLRuntime()->commandQueue().enqueueMapBuffer(
-            biasBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(biasSize) * sizeof(float));
-        ::memset(biasPtrCL, 0, ALIGN_UP4(biasSize) * sizeof(float));
-        ::memcpy(biasPtrCL, biasDataPtr, biasSize * sizeof(float));
+            biasBuffer, true, CL_MAP_WRITE, 0, ALIGN_UP4(biasSize) * sizeof(float), nullptr, nullptr, &error);
+        if(nullptr != biasPtrCL && error == CL_SUCCESS){
+            ::memset(biasPtrCL, 0, ALIGN_UP4(biasSize) * sizeof(float));
+            ::memcpy(biasPtrCL, biasDataPtr, biasSize * sizeof(float));
+        }else{
+            MNN_ERROR("Map error biasPtrCL == nullptr \n");
+        }
         openclBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(biasBuffer, biasPtrCL);
-
         std::shared_ptr<Tensor> bias;
         bias.reset(Tensor::createDevice<float>({1, 1, 1, biasSize}));
         backend->onAcquireBuffer(bias.get(), Backend::STATIC);
@@ -139,9 +148,7 @@ ErrorCode ScaleExecution::onExecute(const std::vector<Tensor *> &inputs, const s
 
     std::vector<uint32_t> roundUpGroupWorkSize(lws.size());
     for (size_t i = 0; i < lws.size(); ++i) {
-        if (lws[i] != 0) {
-            roundUpGroupWorkSize[i] = ROUND_UP(gws[i], lws[i]);
-        }
+        roundUpGroupWorkSize[i] = ROUND_UP(gws[i], std::max((uint32_t)1, lws[i]));
     }
     error = runtime->commandQueue().enqueueNDRangeKernel(
         mKernel, cl::NullRange, cl::NDRange(roundUpGroupWorkSize[0], roundUpGroupWorkSize[1], roundUpGroupWorkSize[2]),

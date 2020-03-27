@@ -6,21 +6,25 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUBackend.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include <cmath>
 #include <mutex>
-#include "BufferAllocator.hpp"
-#include "CPUConcat.hpp"
-#include "CPUTensorConvert.hpp"
-#include "CommonOptFunction.h"
-#include "TensorUtils.hpp"
+#include "core/BufferAllocator.hpp"
+#include "backend/cpu/CPUConcat.hpp"
+#include "backend/cpu/CPUTensorConvert.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/TensorUtils.hpp"
+#include "backend/cpu/ThreadPool.hpp"
+#include "core/SizeComputer.hpp"
 #ifdef _OPENMP
 #include <omp.h>
 #endif // _OPENMP
-#include "CPURuntime.hpp"
+#include "backend/cpu/CPURuntime.hpp"
 
 #define MAX_THREAD_NUMBER 32
 
 //#define MNN_DUMP_MEMORY_USAGE
+#define MNN_CPU_CHECK_NAN 1
 namespace MNN {
 #ifdef MNN_CODEGEN_REGISTER
 void registerCPUOps();
@@ -42,12 +46,14 @@ bool CPUBackend::addCreator(OpType t, Creator* c) {
     return true;
 }
 
-CPUBackend::CPUBackend(int numberThread, BackendConfig::MemoryMode memory, BackendConfig::PowerMode power)
+CPUBackend::CPUBackend(int numberThread, BackendConfig::MemoryMode memory, BackendConfig::PowerMode power, size_t flags)
     : Backend(MNN_FORWARD_CPU), mThreadNumber(numberThread), mMemory(memory), mPower(power) {
     mThreadNumber = std::max(1, mThreadNumber);
     mThreadNumber = std::min(mThreadNumber, MAX_THREAD_NUMBER);
     mDynamicAllocator.reset(new BufferAllocator);
     mStaticAllocator.reset(new BufferAllocator);
+    mCheckNAN = flags == MNN_CPU_CHECK_NAN;
+#ifdef _OPENMP
     switch (power) {
         case BackendConfig::Power_Low:
             MNNSetCPUThreadsMode(MNN_CPU_MODE_LITTLE);
@@ -58,9 +64,36 @@ CPUBackend::CPUBackend(int numberThread, BackendConfig::MemoryMode memory, Backe
         default:
             break;
     }
+#endif
+#ifdef MNN_USE_THREAD_POOL
+    mThreadNumber = ThreadPool::init(mThreadNumber);
+    if (mThreadNumber > 1) {
+        mTaskIndex = ThreadPool::acquireWorkIndex();
+    } else {
+        mTaskIndex = -1;
+    }
+    if (mTaskIndex >= 0 && mPower == BackendConfig::Power_High) {
+        ThreadPool::active();
+    }
+#endif
+    mFlops = MNNGetCPUFlops(mThreadNumber);
+
+#ifdef ENABLE_ARMV82
+    struct cpuinfo_arm_isa cpuinfo_isa;
+    cpuinfo_arm_init(&cpuinfo_isa);
+    mIsSupportDot = cpuinfo_isa.dot;
+    mIsSupportFp16arith = cpuinfo_isa.fp16arith;
+#endif
+
 }
 
 CPUBackend::~CPUBackend() {
+#ifdef MNN_USE_THREAD_POOL
+    if (mTaskIndex >= 0 && mPower == BackendConfig::Power_High) {
+        ThreadPool::deactive();
+    }
+    ThreadPool::releaseWorkIndex(mTaskIndex);
+#endif
 }
 
 void CPUBackend::onExecuteBegin() const {
@@ -72,14 +105,29 @@ void CPUBackend::onExecuteBegin() const {
         FUNC_PRINT_ALL(staticMemoryInMB, f);
     }
 #endif
-// setCPUThreadsMode(MNN_CPU_MODE_POWER_FRI);
+#ifdef MNN_USE_THREAD_POOL
+    if (mTaskIndex >= 0 && mPower != BackendConfig::Power_High) {
+        ThreadPool::active();
+    }
+#else
 #ifdef _OPENMP
     omp_set_dynamic(0);
     omp_set_num_threads(mThreadNumber);
 #endif
+#endif
+}
+void CPUBackend::onExecuteEnd() const {
+#ifdef MNN_USE_THREAD_POOL
+    if (mTaskIndex >= 0 && mPower != BackendConfig::Power_High) {
+        ThreadPool::deactive();
+    }
+#endif
 }
 
 bool CPUBackend::onAcquireBuffer(const MNN::Tensor* nativeTensorConst, StorageType storageType) {
+    if (nativeTensorConst == nullptr) {
+        return false;
+    }
     auto nativeTensor = (Tensor*)nativeTensorConst;
     auto& buffer      = nativeTensor->buffer();
 
@@ -92,7 +140,7 @@ bool CPUBackend::onAcquireBuffer(const MNN::Tensor* nativeTensorConst, StorageTy
     }
     switch (storageType) {
         case STATIC: {
-            buffer.host = (uint8_t*)mStaticAllocator->alloc(size, true);
+            buffer.host = (uint8_t*)mStaticAllocator->alloc(size, false);
             break;
         }
         case DYNAMIC: {
@@ -117,11 +165,14 @@ bool CPUBackend::onAcquireBuffer(const MNN::Tensor* nativeTensorConst, StorageTy
 }
 
 bool CPUBackend::onReleaseBuffer(const MNN::Tensor* nativeTensor, StorageType storageType) {
+    if (nativeTensor == nullptr) {
+        return false;
+    }
     if (nullptr == nativeTensor->buffer().host) {
         return false;
     }
     if (STATIC == storageType) {
-        mStaticAllocator->free(nativeTensor->buffer().host, true);
+        mStaticAllocator->free(nativeTensor->buffer().host);
         return true;
     }
     if (DYNAMIC_SEPERATE == storageType) {
@@ -130,6 +181,17 @@ bool CPUBackend::onReleaseBuffer(const MNN::Tensor* nativeTensor, StorageType st
     mDynamicAllocator->free(nativeTensor->buffer().host);
     return true;
 }
+std::pair<float, bool> CPUBackend::onMeasure(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
+                                    const MNN::Op* op) {
+    auto map  = getCreatorMap();
+    auto iter = map->find(op->type());
+    if (iter == map->end()) {
+        MNN_PRINT("Don't support type %s, %s\n", MNN::EnumNameOpType(op->type()), op->name()->c_str());
+        return std::make_pair(0.0f, false);
+    }
+    auto computeFlops = SizeComputer::computeFlops(op, inputs, outputs);
+    return std::make_pair(computeFlops / mFlops * 1000.0f, true);
+}
 
 /// get execution
 Execution* CPUBackend::onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
@@ -137,26 +199,95 @@ Execution* CPUBackend::onCreate(const std::vector<Tensor*>& inputs, const std::v
     auto map  = getCreatorMap();
     auto iter = map->find(op->type());
     if (iter == map->end()) {
-        MNN_PRINT("Don't support type %d, %s\n", op->type(), op->name()->c_str());
+        MNN_PRINT("Don't support type [%s], %s\n", MNN::EnumNameOpType(op->type()), op->name()->c_str());
         return nullptr;
     }
     auto exe = iter->second->onCreate(inputs, outputs, op, this);
     if (nullptr == exe) {
-        MNN_PRINT("The Creator Don't support type %d, %s\n", op->type(), op->name()->c_str());
+        MNN_PRINT("The Creator Don't support type [%s], %s\n", MNN::EnumNameOpType(op->type()), op->name()->c_str());
         return nullptr;
+    }
+    if (mCheckNAN) {
+        class CheckNANExecution : public Execution {
+        public:
+            CheckNANExecution(Execution* exe) : Execution(exe->backend()) {
+                mExecution.reset(exe);
+                mValid = exe->valid();
+            }
+            virtual ~CheckNANExecution() {
+                // Do nothing
+            }
+            virtual ErrorCode onResize(const std::vector<Tensor*>& inputs,
+                                       const std::vector<Tensor*>& outputs) override {
+                return mExecution->onResize(inputs, outputs);
+            }
+
+            virtual ErrorCode onReleaseCache() override {
+                return mExecution->onReleaseCache();
+            }
+
+            virtual ErrorCode onExecute(const std::vector<Tensor*>& inputs,
+                                        const std::vector<Tensor*>& outputs) override {
+                for (auto tensor : inputs) {
+                    if (halide_type_float != tensor->getType().code) {
+                        return NO_ERROR;
+                    }
+                    auto size = tensor->elementSize();
+                    auto ptr  = tensor->host<float>();
+                    for (int i = 0; i < size; ++i) {
+                        auto value = ptr[i];
+                        if (std::isnan(value) || std::isinf(value)) {
+                            return INVALID_VALUE;
+                        }
+                    }
+                }
+                auto code = mExecution->onExecute(inputs, outputs);
+                if (NO_ERROR != code) {
+                    return code;
+                }
+                for (auto tensor : outputs) {
+                    if (halide_type_float != tensor->getType().code) {
+                        return NO_ERROR;
+                    }
+                    auto size = tensor->elementSize();
+                    auto ptr  = tensor->host<float>();
+                    for (int i = 0; i < size; ++i) {
+                        auto value = ptr[i];
+                        if (std::isnan(value) || std::isinf(value)) {
+                            return INVALID_VALUE;
+                        }
+                    }
+                }
+                return NO_ERROR;
+            }
+
+        private:
+            std::unique_ptr<Execution> mExecution;
+        };
+        return new CheckNANExecution(exe);
     }
     return exe;
 }
 
 bool CPUBackend::onAllocateBuffer() {
+    mStaticAllocator->release(false);
     return true;
 }
 
 bool CPUBackend::onClearBuffer() {
-    mDynamicAllocator->release();
+    mDynamicAllocator->release(true);
+    mStaticAllocator->release(false);
     return true;
 }
-
+std::pair<int, int> CPUBackend::multiThreadDivide(int size) const {
+    int sizeDivide = size / mThreadNumber;
+    sizeDivide = UP_DIV(sizeDivide, 4) * 4;
+    int scheduleNumber = 1;
+    if (sizeDivide > 0) {
+        scheduleNumber = UP_DIV(size, sizeDivide);
+    }
+    return std::make_pair(sizeDivide, scheduleNumber);
+}
 void CPUBackend::onCopyBuffer(const Tensor* srcTensor, const Tensor* dstTensor) const {
     auto& srcBuffer = srcTensor->buffer();
     auto& dstBuffer = dstTensor->buffer();
@@ -168,62 +299,31 @@ void CPUBackend::onCopyBuffer(const Tensor* srcTensor, const Tensor* dstTensor) 
             MNN_ASSERT(srcBuffer.dim[i].extent <= dstBuffer.dim[i].extent);
         }
     }
-    // Don't support cpu to gpu / gpu to cpu
-    MNN_ASSERT(srcBuffer.host != nullptr && dstBuffer.host != nullptr);
-
-    int sizeofType = srcBuffer.type.bytes();
-    if (srcBuffer.dimensions <= 1 ||
-        TensorUtils::getDescribe(srcTensor)->dimensionFormat == TensorUtils::getDescribe(dstTensor)->dimensionFormat) {
-        ::memcpy(dstBuffer.host, srcBuffer.host, srcTensor->size());
+    if (nullptr == srcBuffer.host || nullptr == dstBuffer.host) {
         return;
     }
 
-    if (srcTensor->getDimensionType() == Tensor::TENSORFLOW || dstTensor->getDimensionType() == Tensor::TENSORFLOW) {
-        CPUTensorConverter::convert(srcTensor, dstTensor);
-        return;
-    }
-
-    // NCHW to NC4HW4 or NC4HW4 to NCHW
-    int area = 1;
-    for (int axis = 2; axis < srcBuffer.dimensions; ++axis) {
-        area *= srcBuffer.dim[axis].extent;
-    }
-    if (sizeofType != 4) {
-        MNN_ERROR("Please use NHWC (or Tensorflow dimension type) for copy\n");
-        return;
-    }
-    if (srcBuffer.dimensions > 1 && srcBuffer.dim[1].flags == Tensor::REORDER_4) {
-        MNN_ASSERT(sizeofType == 4);
-        for (int i = 0; i < srcBuffer.dim[0].extent; ++i) {
-            MNNUnpackC4((float*)dstBuffer.host + dstBuffer.dim[0].stride * i,
-                        (const float*)srcBuffer.host + srcBuffer.dim[0].stride * i, area, srcBuffer.dim[1].extent);
-        }
-        return;
-    }
-
-    if (dstBuffer.dimensions > 1 && dstBuffer.dim[1].flags == Tensor::REORDER_4) {
-        MNN_ASSERT(sizeofType == 4);
-        for (int i = 0; i < srcBuffer.dim[0].extent; ++i) {
-            MNNPackC4((float*)dstBuffer.host + dstBuffer.dim[0].stride * i,
-                      (const float*)srcBuffer.host + srcBuffer.dim[0].stride * i, area, srcBuffer.dim[1].extent);
-        }
-        return;
+    auto code = CPUTensorConverter::convert(srcTensor, dstTensor);
+    if (NO_ERROR != code) {
+        MNN_ERROR("Error in CPUBackend::onCopyBuffer\n");
     }
 }
 
 struct CPUBackendCreator : BackendCreator {
     Backend* onCreate(const Backend::Info& info) const override {
-        auto power  = BackendConfig::Power_Normal;
-        auto memory = BackendConfig::Memory_Normal;
+        auto power   = BackendConfig::Power_Normal;
+        auto memory  = BackendConfig::Memory_Normal;
+        size_t flags = 0;
         if (nullptr != info.user) {
             power  = info.user->power;
             memory = info.user->memory;
+            flags  = info.user->flags;
         }
 #ifdef MNN_CODEGEN_REGISTER
         static std::once_flag s_flag;
         std::call_once(s_flag, [&]() { registerCPUOps(); });
 #endif
-        return new CPUBackend(info.numThread, memory, power);
+        return new CPUBackend(info.numThread, memory, power, flags);
     }
 };
 

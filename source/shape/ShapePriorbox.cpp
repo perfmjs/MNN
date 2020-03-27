@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 class PriorBoxComputer : public SizeComputer {
@@ -55,20 +55,40 @@ public:
             stepH = (float)imageH / h;
         }
 
-        int minSizeCount     = minSizes ? minSizes->size() : 0;
-        int maxSizeCount     = maxSizes ? maxSizes->size() : 0;
-        int aspectRatioCount = aspectRatios ? aspectRatios->size() : 0;
-
-        int priorCount = minSizeCount * aspectRatioCount + minSizeCount + maxSizeCount;
-        if (flip) {
-            priorCount += minSizeCount * aspectRatioCount;
+        int minSizeCount = minSizes ? (int)minSizes->size() : 0;
+        int maxSizeCount = maxSizes ? (int)maxSizes->size() : 0;
+        std::vector<float> aspectRatiosValue{1.0f};
+        if (aspectRatios != nullptr) {
+            for (int i = 0; i < aspectRatios->size(); ++i) {
+                auto ratio = aspectRatios->data()[i];
+                bool exist = false;
+                for (auto v : aspectRatiosValue) {
+                    auto diff = v - ratio;
+                    if (diff < 0) {
+                        diff = -diff;
+                    }
+                    if (diff < 1e-6) {
+                        exist = true;
+                        break;
+                    }
+                }
+                if (!exist) {
+                    aspectRatiosValue.emplace_back(ratio);
+                    if (flip) {
+                        aspectRatiosValue.emplace_back(1.0f / ratio);
+                    }
+                }
+            }
         }
+        int priorCount = minSizeCount * aspectRatiosValue.size() + maxSizeCount;
 
-        auto& outputTensorBuffer         = outputs[0]->buffer();
-        outputTensorBuffer.dim[0].extent = 1;
-        outputTensorBuffer.dim[1].extent = 2;
-        outputTensorBuffer.dim[2].extent = 4 * w * h * priorCount;
-        outputTensorBuffer.dim[3].extent = 1;
+        auto& outputTensorBuffer                              = outputs[0]->buffer();
+        outputTensorBuffer.dim[0].extent                      = 1;
+        outputTensorBuffer.dim[1].extent                      = 2;
+        outputTensorBuffer.dim[2].extent                      = 4 * w * h * priorCount;
+        outputTensorBuffer.dim[3].extent                      = 1;
+        outputTensorBuffer.type = halide_type_of<float>();
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = MNN_DATA_FORMAT_NC4HW4;
 
         return true;
     }

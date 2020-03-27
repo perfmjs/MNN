@@ -6,14 +6,17 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanReshape.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/vulkan/execution/VulkanReshape.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
 VulkanReshape::VulkanReshape(const Op* op, Backend* bn) : VulkanBasicExecution(bn), mStorage(2) {
-    mDimType       = op->main_as_Reshape()->dimType();
+    mDimType = MNN_DATA_FORMAT_NCHW;
+    if (op->type() == OpType_Reshape) {
+        mDimType       = op->main_as_Reshape()->dimType();
+    }
     auto vkBackend = static_cast<VulkanBackend*>(bn);
     mTensorConvert0.reset(new VulkanImageConverter(vkBackend));
     mTensorConvert1.reset(new VulkanImageConverter(vkBackend));
@@ -51,7 +54,6 @@ ErrorCode VulkanReshape::setLayout(const Tensor* input, const Tensor* output) {
 
     mStorage.buffer().dim[0].extent = 1;
     mStorage.buffer().dim[1].extent = totalSize / extraDivide * extraMulti;
-    mStorage.buffer().dim[1].flags  = 0;
     backend()->onAcquireBuffer(&mStorage, Backend::DYNAMIC);
 
     TensorUtils::copyShape(input, &mWrapTensorForInput);
@@ -65,9 +67,6 @@ ErrorCode VulkanReshape::setLayout(const Tensor* input, const Tensor* output) {
         }
     }
 
-    if (input->buffer().dimensions > 1) {
-        mWrapTensorForInput.buffer().dim[1].flags = 0;
-    }
     mWrapTensorForInput.buffer().device = mStorage.buffer().device;
     TensorUtils::setLinearLayout(&mWrapTensorForInput);
 
@@ -80,9 +79,6 @@ ErrorCode VulkanReshape::setLayout(const Tensor* input, const Tensor* output) {
             mWrapTensorForOutput.buffer().dim[2].extent = mWrapTensorForOutput.buffer().dim[3].extent;
             mWrapTensorForOutput.buffer().dim[3].extent = mWrapTensorForOutput.buffer().dim[1].extent;
         }
-    }
-    if (output->buffer().dimensions > 1) {
-        mWrapTensorForOutput.buffer().dim[1].flags = 0;
     }
     mWrapTensorForOutput.buffer().device = mStorage.buffer().device;
     TensorUtils::setLinearLayout(&mWrapTensorForOutput);
@@ -97,9 +93,9 @@ ErrorCode VulkanReshape::onEncode(const std::vector<Tensor*>& inputs, const std:
     auto input  = inputs[0];
     auto output = outputs[0];
 
-    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NHWC &&
-        TensorUtils::getDescribe(output)->dimensionFormat == MNN_DATA_FORMAT_NHWC) {
-        // the layout of input and output tensor are all NHWC, then copy buffer directly
+    if (TensorUtils::getDescribe(input)->dimensionFormat != MNN_DATA_FORMAT_NC4HW4 &&
+        TensorUtils::getDescribe(output)->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
+        // the layout of input and output tensor are all buffer, then copy buffer directly
         auto inputBuffer  = reinterpret_cast<VkBuffer>(input->deviceId());
         auto outputBuffer = reinterpret_cast<VkBuffer>(output->deviceId());
         cmdBuffer->barrierSource(inputBuffer, 0, input->size());
@@ -126,13 +122,16 @@ ErrorCode VulkanReshape::onEncode(const std::vector<Tensor*>& inputs, const std:
 
 class VulkanReshapeCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanReshape(op, bn);
     }
 };
 
 static bool gResistor = []() {
     VulkanBackend::addCreator(OpType_Reshape, new VulkanReshapeCreator);
+    VulkanBackend::addCreator(OpType_Squeeze, new VulkanReshapeCreator);
+    VulkanBackend::addCreator(OpType_Unsqueeze, new VulkanReshapeCreator);
+    VulkanBackend::addCreator(OpType_ExpandDims, new VulkanReshapeCreator);
     return true;
 }();
 

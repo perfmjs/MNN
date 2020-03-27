@@ -13,10 +13,10 @@
 #include <map>
 #include <memory>
 #include <vector>
-#include "ErrorCode.hpp"
-#include "MNNForwardType.h"
+#include <MNN/ErrorCode.hpp>
+#include <MNN/MNNForwardType.h>
 #include "NonCopyable.hpp"
-#include "Tensor.hpp"
+#include <MNN/Tensor.hpp>
 
 namespace MNN {
 
@@ -35,6 +35,14 @@ public:
         int numThread = 4;
         /** user data. */
         BackendConfig* user = NULL;
+        enum Mode {
+            // The Op will be run in execution->onExecute
+            DIRECT = 0,
+
+            // The Op will be recorded. Run in onExecuteBegin and Wait in onExecuteEnd
+            INDIRECT = 1
+        };
+        Mode mode = DIRECT;
     };
 
     /** backend buffer storage type */
@@ -77,6 +85,18 @@ public:
     virtual ~Backend() = default;
 
 public:
+    /**
+     * @brief measure the cost for op with input and output tensors.
+     * @param inputs    input tensors.
+     * @param outputs   output tensors.
+     * @param op        given op.
+     * @return std::make_pair(timeDelayInMs, support);
+     */
+    virtual std::pair<float, bool> onMeasure(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
+                                            const MNN::Op* op) {
+        return std::make_pair(0.0f, false);
+    }
+
     /**
      * @brief create execution for op with input and output tensors.
      * @param inputs    input tensors.
@@ -162,6 +182,14 @@ public:
      */
     virtual void onCopyBuffer(const Tensor* srcTensor, const Tensor* dstTensor) const = 0;
 
+    /**
+     * @brief get backend memory allocator
+     * @param type: StorageType, default vaule is DYNAMIC
+     */
+    virtual void* getAllocator(StorageType type = DYNAMIC) const{
+        return nullptr;
+    }
+    
 public:
     /**
      * @brief get forward type.
@@ -170,6 +198,12 @@ public:
     inline MNNForwardType type() const {
         return mType;
     }
+    
+public:
+    // Backend features
+    // CPU features
+    bool mIsSupportDot = false;
+    bool mIsSupportFp16arith = false;
 
 private:
     const MNNForwardType mType;
@@ -190,6 +224,16 @@ public:
      */
     virtual Backend* onCreate(const Backend::Info& info) const = 0;
 
+
+    /**
+     @brief Turn info to supported.
+     @param info    info to valid.
+     @return success or not
+     */
+    virtual bool onValid(Backend::Info& info) const {
+        info.mode = Backend::Info::DIRECT;
+        return true;
+    }
 protected:
     /**
      @brief deinitializer.
@@ -212,6 +256,7 @@ MNN_PUBLIC const BackendCreator* MNNGetExtraBackendCreator(MNNForwardType type);
  */
 MNN_PUBLIC bool MNNInsertExtraBackendCreator(MNNForwardType type, const BackendCreator* creator,
                                              bool needCheck = false);
+
 
 } // namespace MNN
 

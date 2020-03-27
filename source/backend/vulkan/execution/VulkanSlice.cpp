@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanSlice.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/vulkan/execution/VulkanSlice.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
@@ -70,7 +70,6 @@ ErrorCode VulkanSlice::onEncode(const std::vector<Tensor*>& inputs, const std::v
         mTempTensor.buffer().type = input->buffer().type;
         TensorUtils::copyShape(input, &mTempTensor);
         TensorUtils::getDescribe(&mTempTensor)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-        mTempTensor.buffer().dim[1].flags                       = 0;
         backend()->onAcquireBuffer(&mTempTensor, Backend::DYNAMIC);
 
         mTensorConverter4Input->encodeTensorToBuffer(input, reinterpret_cast<VkBuffer>(mTempTensor.deviceId()),
@@ -95,7 +94,7 @@ ErrorCode VulkanSlice::onEncode(const std::vector<Tensor*>& inputs, const std::v
 
 class VulkanSliceCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         const auto sliceParam = op->main_as_Slice();
         if (1 != sliceParam->axis()) {
             MNN_PRINT("Vulkan slice don't support %d axis slice\n", sliceParam->axis());

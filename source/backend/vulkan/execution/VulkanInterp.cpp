@@ -6,7 +6,7 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanInterp.hpp"
+#include "backend/vulkan/execution/VulkanInterp.hpp"
 
 namespace MNN {
 
@@ -45,7 +45,7 @@ ErrorCode VulkanInterp::onEncode(const std::vector<Tensor*>& inputs, const std::
 
 class VulkanInterpCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanInterp(op, bn);
     }
 };

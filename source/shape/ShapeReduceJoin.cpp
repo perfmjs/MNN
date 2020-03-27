@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 class ReduceJoinComputer : public SizeComputer {
@@ -40,9 +40,10 @@ public:
             output->buffer().dim[i].extent = shape[i];
         }
         output->setType(DataType_DT_STRING);
+        TensorUtils::getDescribe(outputs[0])->dimensionFormat = MNN_DATA_FORMAT_NHWC;
         return true;
     }
 };
 
-REGISTER_SHAPE(ReduceJoinComputer, OpType_ReduceJoin);
+REGISTER_SHAPE_INPUTS(ReduceJoinComputer, OpType_ReduceJoin, {1});
 } // namespace MNN

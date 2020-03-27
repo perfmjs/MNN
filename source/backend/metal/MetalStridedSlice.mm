@@ -6,10 +6,10 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#import "MetalStridedSlice.hpp"
-#import "MNNMetalContext.h"
-#import "Macro.h"
-#import "MetalBackend.hpp"
+#import "backend/metal/MetalStridedSlice.hpp"
+#import "backend/metal/MNNMetalContext.h"
+#import "core/Macro.h"
+#import "backend/metal/MetalBackend.hpp"
 
 #if MNN_METAL_ENABLED
 namespace MNN {
@@ -61,13 +61,10 @@ ErrorCode MetalStridedSlice::onExecute(const std::vector<Tensor *> &inputs, cons
     [context dispatchEncoder:encoder threads:{ 1, 1, 1 } bandwidth:bandwidth];
 
     // stride slice
-    auto type = mParam->T();
-    if (type == DataType_DT_INT32) {
+    if (input->getType().code == halide_type_int) {
         bandwidth = [context load:@"strided_slice_int32" encoder:encoder];
-    } else if (type == DataType_DT_FLOAT) {
-        bandwidth = [context load:@"strided_slice_float" encoder:encoder];
     } else {
-        return NOT_SUPPORT;
+        bandwidth = [context load:@"strided_slice_float" encoder:encoder];
     }
     [encoder setBuffer:(__bridge id<MTLBuffer>)(void *)input->deviceId() offset:0 atIndex:0];
     [encoder setBuffer:(__bridge id<MTLBuffer>)(void *)output->deviceId() offset:0 atIndex:1];

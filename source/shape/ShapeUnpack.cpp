@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
 
@@ -38,6 +38,7 @@ class UnpackComputer : public SizeComputer {
             for (int j = 0; j < outputDimensions; j++) {
                 output.dim[j].extent = outDims[j];
             }
+            TensorUtils::getDescribe(outputs[i])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
         }
 
         return true;

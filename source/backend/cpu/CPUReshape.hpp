@@ -9,22 +9,22 @@
 #ifndef CPUReshape_hpp
 #define CPUReshape_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 #include "Tensor_generated.h"
 
 namespace MNN {
 class CPUReshape : public Execution {
 public:
-    CPUReshape(Backend *b, MNN_DATA_FORMAT dimType);
+    CPUReshape(Backend *b, MNN_DATA_FORMAT midFormat);
     virtual ~CPUReshape() = default;
     virtual ErrorCode onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) override;
     virtual ErrorCode onExecute(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) override;
 
 protected:
-    MNN_DATA_FORMAT mDimType;
     Tensor mStorage;
     Tensor mWrapTensorForInput;
     Tensor mWrapTensorForOutput;
+    MNN_DATA_FORMAT mMidFormat;
 };
 } // namespace MNN
 #endif /* CPUReshape_hpp */

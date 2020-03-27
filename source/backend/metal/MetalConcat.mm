@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#import "MetalConcat.hpp"
-#import "MNNMetalContext.h"
-#import "Macro.h"
-#import "MetalBackend.hpp"
-#import "TensorUtils.hpp"
+#import "backend/metal/MetalConcat.hpp"
+#import "backend/metal/MNNMetalContext.h"
+#import "core/Macro.h"
+#import "backend/metal/MetalBackend.hpp"
+#import "core/TensorUtils.hpp"
 
 #if MNN_METAL_ENABLED
 namespace MNN {
@@ -67,7 +67,6 @@ ErrorCode MetalConcat::onResize(const std::vector<Tensor *> &inputs, const std::
         mTempOutput.reset(new Tensor);
         TensorUtils::copyShape(output, mTempOutput.get());
         TensorUtils::getDescribe(mTempOutput.get())->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-        mTempOutput->buffer().dim[1].flags                           = 0; // force NCHW
         TensorUtils::setLinearLayout(mTempOutput.get());
         backend->onAcquireBuffer(mTempOutput.get(), Backend::DYNAMIC);
 
@@ -77,7 +76,6 @@ ErrorCode MetalConcat::onResize(const std::vector<Tensor *> &inputs, const std::
             std::shared_ptr<Tensor> tempInput(new Tensor);
             TensorUtils::copyShape(inputs[i], tempInput.get());
             TensorUtils::getDescribe(tempInput.get())->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-            tempInput->buffer().dim[1].flags                           = 0; // force NCHW
             TensorUtils::setLinearLayout(tempInput.get());
             mTempInputs.push_back(tempInput);
             backend->onAcquireBuffer(tempInput.get(), Backend::DYNAMIC);

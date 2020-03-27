@@ -6,14 +6,15 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "ConvolutionTiledExecutor.hpp"
-#include "AutoTime.hpp"
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
-#include "Concurrency.h"
-#include "ConvOpt.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/cpu/compute/ConvolutionTiledExecutor.hpp"
+#include <MNN/AutoTime.hpp>
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Concurrency.h"
+#include "backend/cpu/compute/ConvOpt.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "math/Vec4.hpp"
 
 namespace MNN {
 ErrorCode ConvolutionTiledExecutorMultiInput::onExecute(const std::vector<Tensor*>& inputs,
@@ -23,7 +24,9 @@ ErrorCode ConvolutionTiledExecutorMultiInput::onExecute(const std::vector<Tensor
     ::memset(mTempWeight->host<float>(), 0, mTempWeight->size());
     if (nullptr != mTempBias) {
         ::memset(mTempBias->host<float>(), 0, mTempBias->size());
-        ::memcpy(mTempBias->host<float>(), inputs[2]->host<float>(), inputs[2]->size());
+        if (inputs.size() > 2) {
+            ::memcpy(mTempBias->host<float>(), inputs[2]->host<float>(), inputs[2]->size());
+        }
     }
     CPUConvolution::reorderWeight(mTempWeight->host<float>(), inputs[1]->host<float>(), depth, outputCount,
                                   inputs[1]->width() * inputs[1]->height(), mTempWeightCache->host<float>());
@@ -32,7 +35,7 @@ ErrorCode ConvolutionTiledExecutorMultiInput::onExecute(const std::vector<Tensor
 ErrorCode ConvolutionTiledExecutorMultiInput::onResize(const std::vector<Tensor*>& inputs,
                                                        const std::vector<Tensor*>& outputs) {
     int depth       = inputs[1]->channel();
-    int outputCount = inputs[1]->batch();
+    int outputCount = outputs[0]->channel();
     mTempWeight.reset(Tensor::createDevice<float>(
         {UP_DIV(outputCount, 4), UP_DIV(depth, 4), inputs[1]->width() * inputs[1]->height(), 16}));
     mTempWeightCache.reset(Tensor::createDevice<float>(
@@ -40,12 +43,12 @@ ErrorCode ConvolutionTiledExecutorMultiInput::onResize(const std::vector<Tensor*
     backend()->onAcquireBuffer(mTempWeight.get(), Backend::DYNAMIC);
     backend()->onAcquireBuffer(mTempWeightCache.get(), Backend::DYNAMIC);
     mTempBias.reset();
-    if (inputs[2]->elementSize() % 4 != 0) {
-        mTempBias.reset(Tensor::createDevice<float>({ALIGN_UP4(inputs[2]->elementSize())}));
+    if (inputs.size() > 2 && inputs[2]->elementSize() % 4 == 0) {
+        mInputs = {inputs[0], mTempWeight.get(), inputs[2]};
+    } else {
+        mTempBias.reset(Tensor::createDevice<float>({ALIGN_UP4(outputCount)}));
         backend()->onAcquireBuffer(mTempBias.get(), Backend::DYNAMIC);
         mInputs = {inputs[0], mTempWeight.get(), mTempBias.get()};
-    } else {
-        mInputs = {inputs[0], mTempWeight.get(), inputs[2]};
     }
     backend()->onReleaseBuffer(mTempWeightCache.get(), Backend::DYNAMIC);
     auto errorCode = mProxy->onResize(mInputs, outputs);
@@ -61,6 +64,7 @@ ConvolutionTiledExecutor::ConvolutionTiledExecutor(const Convolution2DCommon* co
                                                    const float* bias, size_t biasSize)
     : MNN::Execution(b) {
     auto outputCount = (int)biasSize;
+    // TODO, use common->inputCount to get srcCount
     auto srcCount    = (int)originWeightSize / outputCount / common->kernelX() / common->kernelY();
     mWeight.reset(Tensor::createDevice<float>(
         {UP_DIV(outputCount, 4), UP_DIV(srcCount, 4), (int)common->kernelX(), common->kernelY(), 16}));
@@ -114,7 +118,8 @@ ErrorCode ConvolutionTiledExecutorBasic::onResize(const std::vector<Tensor*>& in
     int strideX_step    = strideX * 4;
     int src_z_step      = input->width() * input->height() * 4;
 
-    if (width <= CONVOLUTION_TILED_NUMBER * 4 || dst_depth_quad < 4 || src_depth_quad < 4) {
+    if (width * height <= CONVOLUTION_TILED_NUMBER * 4 || dst_depth_quad < 4 || src_depth_quad < 4) {
+        // Use Slice Window
         threadNumber                      = std::min(dst_depth_quad, threadNumber);
         std::function<void(int)> function = [=](int tId) {
             for (int batchIndex = 0; batchIndex < input->batch(); ++batchIndex) {
@@ -150,11 +155,12 @@ ErrorCode ConvolutionTiledExecutorBasic::onResize(const std::vector<Tensor*>& in
         return NO_ERROR;
     }
     auto& tempBuffer = mTempBuffer.buffer();
-    int srcXC = 1 + (CONVOLUTION_TILED_NUMBER - 1) * mCommon->strideX() + mCommon->dilateX() * (mCommon->kernelX() - 1);
+    auto icC4 = UP_DIV(input->channel(), 4);
+    auto ocC4 = UP_DIV(output->channel(), 4);
 
     tempBuffer.dim[0].extent = threadNumber;
-    tempBuffer.dim[1].extent = srcXC * mCommon->kernelY();
-    tempBuffer.dim[2].extent = weight->length(1); // srcCount/4
+    tempBuffer.dim[1].extent = CONVOLUTION_TILED_NUMBER;
+    tempBuffer.dim[2].extent = icC4 * mCommon->kernelY() * mCommon->kernelX(); // srcCount/4 * kx*ky
     tempBuffer.dim[3].extent = 4;
     TensorUtils::setLinearLayout(&mTempBuffer);
 
@@ -164,63 +170,59 @@ ErrorCode ConvolutionTiledExecutorBasic::onResize(const std::vector<Tensor*>& in
     }
     backend()->onReleaseBuffer(&mTempBuffer, Backend::DYNAMIC);
 
-    int xCount                             = UP_DIV(width, CONVOLUTION_TILED_NUMBER);
-    auto threadNumberFirst                 = std::min(threadNumber, xCount);
+    int count                             = UP_DIV(width*height, CONVOLUTION_TILED_NUMBER);
+    int plane = width * height;
+    auto threadNumberFirst                 = std::min(threadNumber, count);
     std::function<void(int)> firstFunction = [=](int tId) {
-        auto _xBuffer = mTempBuffer.host<float>() + tId * mTempBuffer.buffer().dim[0].stride;
+        auto colBuffer = mTempBuffer.host<float>() + mTempBuffer.stride(0) * tId;
         for (int batchIndex = 0; batchIndex < input->batch(); ++batchIndex) {
             auto dstOrigin = output->host<float>() + batchIndex * output->stride(0);
             auto srcOrigin = input->host<float>() + batchIndex * input->stride(0);
 
-            for (int x = (int)tId; x < xCount; x += threadNumberFirst) {
-                int xIndex    = (int)x * CONVOLUTION_TILED_NUMBER;
-                int xReamin   = width - xIndex;
-                int xC        = xReamin > CONVOLUTION_TILED_NUMBER ? CONVOLUTION_TILED_NUMBER : xReamin;
-                int srcXC     = 1 + (xC - 1) * strideX + dilateX * (kernel_width - 1);
-                int dx        = xIndex;
-                int srcStartX = dx * strideX - padX;
-                int srcEndX   = srcStartX + srcXC >= src_width ? src_width : srcStartX + srcXC;
-
-                int dstOffset = 0;
-                if (srcStartX < 0) {
-                    dstOffset = -srcStartX;
-                    srcStartX = 0;
-                }
-                int copyCount = srcEndX - srcStartX;
-
-                auto src_x = srcOrigin + 4 * srcStartX;
-
-                for (int dy = 0; dy < height; ++dy) {
-                    // Expand
-                    ::memset(_xBuffer, 0, mTempBuffer.buffer().dim[0].stride * sizeof(float));
-                    int srcStartY = dy * strideY - padY;
-                    int sfy       = ALIMAX(0, (UP_DIV(-srcStartY, dilateY)));
-                    int efy       = ALIMIN(kernel_height, UP_DIV(src_height - srcStartY, dilateY));
-                    for (int sz = 0; sz < src_depth_quad; ++sz) {
-                        auto dst_z = _xBuffer + sz * srcXC * kernel_height * 4;
-                        auto src_z = src_x + sz * src_z_step;
-                        for (int ky = sfy; ky < efy; ++ky) {
-                            int sy     = srcStartY + ky * dilateY;
-                            auto src_y = src_z + 4 * sy * src_width;
-                            auto dst_y = dst_z + (ky * srcXC + dstOffset) * 4;
-                            ::memcpy(dst_y, src_y, copyCount * 4 * sizeof(float));
+            for (int x = (int)tId; x < count; x += threadNumberFirst) {
+                int start    = (int)x * CONVOLUTION_TILED_NUMBER;
+                int remain   = plane - start;
+                int xC        = remain > CONVOLUTION_TILED_NUMBER ? CONVOLUTION_TILED_NUMBER : remain;
+                // Im2Col
+                ::memset(colBuffer, 0, mTempBuffer.stride(0) * sizeof(float));
+                for (int i = 0; i<xC; ++i) {
+                    int index = start + i;
+                    int ox = index % width;
+                    int oy = index / width;
+                    int sxSta = ox * strideX - padX;
+                    int sySta = oy * strideY - padY;
+                    for (int ky=0; ky<kernel_height; ++ky) {
+                        auto sy = sySta + ky * dilateY;
+                        if (sy < 0 || sy >= src_height) {
+                            continue;
+                        }
+                        for (int kx=0; kx<kernel_width; ++kx) {
+                            auto sx = sxSta + kx * dilateX;
+                            if (sx < 0 || sx >= src_width) {
+                                continue;
+                            }
+                            auto src = srcOrigin + sx * 4 + sy * 4 * src_width;
+                            auto dst = colBuffer + i * 4 + 4 * xC * (kx + ky*kernel_width);
+                            for (int sz=0; sz<icC4; ++sz) {
+                                Math::Vec4::save(dst + 4 * xC * kernel_height * kernel_width * sz, Math::Vec4::load(src + src_z_step * sz));
+                            }
                         }
                     }
-
-                    for (int dz = 0; dz < dst_depth_quad; ++dz) {
-                        float* dst_z           = dstOrigin + dz * width * height * 4 + xIndex * 4 + width * 4 * dy;
-                        const float* weight_dz = weightPtr + dz * weight_z_step;
-                        MNNConvSlideWindowMiddle(dst_z, _xBuffer, weight_dz, xC, strideX_step, src_depth_quad,
-                                                 srcXC * 4 * kernel_height, kernel_width, kernel_height, dilateX_step,
-                                                 srcXC * 4, nullptr);
-                    }
+                }
+                // GEMM
+                if (xC == CONVOLUTION_TILED_NUMBER) {
+                    MNNGemmFloatUnit_4(dstOrigin + start * 4, colBuffer,
+                                        weightPtr, icC4 * kernel_width * kernel_height, width * height * 4, ocC4, 0);
+                } else {
+                    MNNGemmFloatCommon_4(dstOrigin + start * 4, colBuffer,
+                                        weightPtr, icC4 * kernel_width * kernel_height, width * height * 4, ocC4, xC, 0);
                 }
             }
         }
     };
     mFunctions.emplace_back(std::make_pair(threadNumberFirst, firstFunction));
     int threadNumberSecond                  = std::min(threadNumber, dst_depth_quad);
-    std::function<void(int)> secondFunction = [this, biasPtr, width, height, dst_depth_quad, output, postFunction,
+    std::function<void(int)> secondFunction = [biasPtr, width, height, dst_depth_quad, output, postFunction,
                                                threadNumberSecond](int tId) {
         for (int batchIndex = 0; batchIndex < output->batch(); ++batchIndex) {
             auto dstOrigin = output->host<float>() + batchIndex * output->stride(0);

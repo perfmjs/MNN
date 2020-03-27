@@ -6,12 +6,12 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#import "MetalSoftmax.hpp"
-#import "MNNMetalContext.h"
-#import "Macro.h"
-#import "MetalBackend.hpp"
-
+#import "backend/metal/MNNMetalContext.h"
 #if MNN_METAL_ENABLED
+#import "backend/metal/MetalSoftmax.hpp"
+#import "core/Macro.h"
+#import "backend/metal/MetalBackend.hpp"
+#import "core/TensorUtils.hpp"
 namespace MNN {
 
 MetalSoftmax::MetalSoftmax(Backend *backend, int32_t axis) : Execution(backend), mAxis(axis) {
@@ -22,21 +22,29 @@ ErrorCode MetalSoftmax::onExecute(const std::vector<Tensor *> &inputs, const std
     auto backend = static_cast<MetalBackend *>(this->backend());
     auto context = (__bridge MNNMetalContext *)backend->context();
     auto input = inputs[0], output = outputs[0];
-    const int dimensions = input->buffer().dimensions;
-    auto reAxis          = mAxis < 0 ? dimensions - 1 : mAxis;
+    auto dimensions    = input->buffer().dimensions;
+    auto realAxis      = mAxis < 0 ? dimensions + mAxis : mAxis;
+    auto channelPacked = TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4; // even dims != 4
+    auto reorder       = realAxis == 1 && channelPacked;
     // shape
-    auto inside = 1, flat = input->length(reAxis), axis = flat, outside = 1;
-    for (int i = 0; i < reAxis; i++) {
-        outside *= input->buffer().dim[i].flags ? UP_DIV(input->length(i), 4) : input->length(i);
+    auto inside = 1, flat = input->length(realAxis), axis = flat, outside = 1;
+    for (int i = 0; i < realAxis; i++) {
+        auto length = input->length(i);
+        if (1 == i && channelPacked) {
+            length = UP_DIV(length, 4);
+        }
+        outside *= length;
     }
-    for (int i = reAxis + 1; i < input->dimensions(); i++) {
-        inside *= input->buffer().dim[i].flags ? UP_DIV(input->length(i), 4) : input->length(i);
+    for (int i = realAxis + 1; i < input->dimensions(); i++) {
+        auto length = input->length(i);
+        if (1 == i && channelPacked) {
+            length = UP_DIV(length, 4);
+        }
+        inside *= length;
     }
-    auto reorder = input->buffer().dim[reAxis].flags;
     if (reorder) {
         axis = UP_DIV(axis, 4);
     }
-
     auto shape                 = [context newDeviceBuffer:4 * sizeof(int) access:CPUWriteOnly];
     ((int *)shape.contents)[0] = inside;
     ((int *)shape.contents)[1] = axis;

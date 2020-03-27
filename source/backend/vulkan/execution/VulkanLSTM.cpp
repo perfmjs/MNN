@@ -6,8 +6,8 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanLSTM.hpp"
-#include "Macro.h"
+#include "backend/vulkan/execution/VulkanLSTM.hpp"
+#include "core/Macro.h"
 
 namespace MNN {
 
@@ -250,7 +250,7 @@ ErrorCode VulkanLSTM::onEncode(const std::vector<Tensor*>& inputs, const std::ve
 
 class VulkanLSTMCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanLSTM(op->main_as_LSTM(), bn);
     }
 };

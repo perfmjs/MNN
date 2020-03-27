@@ -9,11 +9,11 @@
 #ifndef ReshapeExecution_hpp
 #define ReshapeExecution_hpp
 
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 
 #include <MNN_generated.h>
 #include <vector>
-#include "core/OpenCLBackend.hpp"
+#include "backend/opencl/core/OpenCLBackend.hpp"
 
 namespace MNN {
 namespace OpenCL {
@@ -27,6 +27,7 @@ public:
     virtual ErrorCode onExecute(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) override;
 
 private:
+    MNN_DATA_FORMAT mDimType;
     std::unique_ptr<MNN::OpenCL::ImageBufferConvertor> mImageBufferConvertor;
     cl::Kernel mBufferToImageKernel;
     cl::Kernel mImageToBufferKernel;

@@ -9,21 +9,20 @@
 #define MNN_OPEN_TIME_TRACE
 
 #include <math.h>
-#include <memory.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <sstream>
-#include "AutoTime.hpp"
-#include "Backend.hpp"
+#include <MNN/AutoTime.hpp>
+#include "core/Backend.hpp"
 #include "Config.hpp"
-#include "Interpreter.hpp"
-#include "MNNDefine.h"
-#include "Macro.h"
-#include "Tensor.hpp"
-#include "TensorUtils.hpp"
+#include <MNN/Interpreter.hpp>
+#include <MNN/MNNDefine.h>
+#include "core/Macro.h"
+#include <MNN/Tensor.hpp>
+#include "core/TensorUtils.hpp"
 
 #define NONE "\e[0m"
 #define RED "\e[0;31m"
@@ -32,6 +31,14 @@
 #define BLUE "\e[0;34m"
 #define L_BLUE "\e[1;34m"
 #define BOLD "\e[1m"
+
+template<typename T>
+inline T stringConvert(const char* number) {
+    std::istringstream os(number);
+    T v;
+    os >> v;
+    return v;
+}
 
 std::vector<std::string> splitNames(const int size, const std::string names) {
     std::vector<std::string> split(size);
@@ -131,11 +138,11 @@ int main(int argc, const char* argv[]) {
     // read args
     auto type = MNN_FORWARD_CPU;
     if (argc > 3) {
-        type = (MNNForwardType)::atoi(argv[3]);
+        type = (MNNForwardType)stringConvert<int>(argv[3]);
     }
     auto tolerance = 0.1f;
     if (argc > 4) {
-        tolerance = ::atof(argv[4]);
+        tolerance = stringConvert<float>(argv[4]);
     }
 
     // input config
@@ -155,6 +162,14 @@ int main(int argc, const char* argv[]) {
     auto net = std::shared_ptr<MNN::Interpreter>(MNN::Interpreter::createFromFile(modelName));
     MNN::ScheduleConfig schedule;
     schedule.type = type;
+    MNN::BackendConfig backendConfig;
+    if (type != MNN_FORWARD_CPU) {
+        // Use Precision_High for other backend
+        // Test CPU ARM v8.2 and other approciate method
+        backendConfig.precision = MNN::BackendConfig::Precision_High;
+    }
+    schedule.backendConfig = &backendConfig;
+
     auto session  = net->createSession(schedule);
 
     // resize

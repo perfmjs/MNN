@@ -6,16 +6,16 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUReshape.hpp"
-#include "CPUBackend.hpp"
-#include "CommonOptFunction.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/cpu/CPUReshape.hpp"
+#include "backend/cpu/CPUBackend.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
-CPUReshape::CPUReshape(Backend *b, MNN_DATA_FORMAT dimType) : MNN::Execution(b), mStorage(2), mDimType(dimType) {
-    // nothing to do
+CPUReshape::CPUReshape(Backend *b, MNN_DATA_FORMAT midFormat) : MNN::Execution(b), mStorage(2) {
+    mMidFormat = midFormat;
 }
 
 ErrorCode CPUReshape::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
@@ -23,65 +23,57 @@ ErrorCode CPUReshape::onResize(const std::vector<Tensor *> &inputs, const std::v
     MNN_ASSERT(1 == outputs.size());
 
     auto input    = inputs[0];
-    int totalSize = 1;
+    auto output   = outputs[0];
 
-    mWrapTensorForInput.buffer().type  = inputs[0]->buffer().type;
-    mWrapTensorForOutput.buffer().type = inputs[0]->buffer().type;
-
-    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4) {
-        TensorUtils::getDescribe(&mWrapTensorForInput)->dimensionFormat  = MNN_DATA_FORMAT_NCHW;
-        TensorUtils::getDescribe(&mWrapTensorForOutput)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
-    } else {
-        TensorUtils::getDescribe(&mWrapTensorForInput)->dimensionFormat  = MNN_DATA_FORMAT_NHWC;
-        TensorUtils::getDescribe(&mWrapTensorForOutput)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
+    if (TensorUtils::getDescribe(input)->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
+        return NO_ERROR;
     }
 
+    int totalSize = 1;
     for (int i = 0; i < input->buffer().dimensions; ++i) {
         totalSize *= input->buffer().dim[i].extent;
     }
-
+    TensorUtils::getDescribe(&mStorage)->dimensionFormat = MNN_DATA_FORMAT_NCHW;
     mStorage.buffer().dim[0].extent = 1;
     mStorage.buffer().dim[1].extent = totalSize;
-    mStorage.buffer().dim[1].flags  = 0;
     mStorage.buffer().dimensions    = 2;
     mStorage.buffer().type          = input->getType();
     backend()->onAcquireBuffer(&mStorage, Backend::DYNAMIC);
     backend()->onReleaseBuffer(&mStorage, Backend::DYNAMIC);
 
-    TensorUtils::copyShape(inputs[0], &mWrapTensorForInput);
-    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4 &&
-        mDimType == MNN_DATA_FORMAT_NHWC) {
-        TensorUtils::getDescribe(&mWrapTensorForInput)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
-        if (mWrapTensorForInput.buffer().dimensions == 4) {
-            int channels                               = mWrapTensorForInput.buffer().dim[1].extent;
-            mWrapTensorForInput.buffer().dim[1].extent = mWrapTensorForInput.buffer().dim[2].extent;
-            mWrapTensorForInput.buffer().dim[2].extent = mWrapTensorForInput.buffer().dim[3].extent;
-            mWrapTensorForInput.buffer().dim[3].extent = channels;
+    auto convertTensorMeta = [&](const Tensor* tensor, Tensor* wrapTensor) {
+        wrapTensor->buffer().host       = mStorage.buffer().host;
+        wrapTensor->buffer().dimensions = tensor->dimensions();
+        wrapTensor->buffer().type       = tensor->buffer().type;
+        TensorUtils::getDescribe(wrapTensor)->dimensionFormat = mMidFormat;
+        auto tensorFormat      = TensorUtils::getDescribe(tensor)->dimensionFormat;
+        bool originCaffeFormat = (tensorFormat == MNN_DATA_FORMAT_NCHW || tensorFormat == MNN_DATA_FORMAT_NC4HW4);
+        bool wrapCaffeFormat   = (mMidFormat == MNN_DATA_FORMAT_NCHW || mMidFormat == MNN_DATA_FORMAT_NC4HW4);
+        bool originTfFormat    = (tensorFormat == MNN_DATA_FORMAT_NHWC || tensorFormat == MNN_DATA_FORMAT_NHWC4);
+        bool wrapTfFormat      = (mMidFormat == MNN_DATA_FORMAT_NHWC || mMidFormat == MNN_DATA_FORMAT_NHWC4);
+        if ((originCaffeFormat && wrapCaffeFormat) || (originTfFormat && wrapTfFormat)) {
+            TensorUtils::copyShape(tensor, wrapTensor);
+        } else if (originCaffeFormat && wrapTfFormat) {
+            for (int i = 1; i < wrapTensor->dimensions() - 1; ++i) {
+                wrapTensor->setLength(i, tensor->length(i + 1));
+            }
+            wrapTensor->setLength(0, tensor->length(0));
+            wrapTensor->setLength(wrapTensor->dimensions() - 1, tensor->length(1));
+        } else if (originTfFormat && wrapCaffeFormat) {
+            for (int i = 2; i < wrapTensor->dimensions(); ++i) {
+                wrapTensor->setLength(i, tensor->length(i - 1));
+            }
+            wrapTensor->setLength(0, tensor->length(0));
+            wrapTensor->setLength(1, tensor->length(tensor->dimensions() - 1));
+        } else {
+            // will not reach here
+            MNN_ASSERT(false);
         }
-    }
+        TensorUtils::setLinearLayout(wrapTensor);
+    };
 
-    if (input->buffer().dimensions > 1) {
-        mWrapTensorForInput.buffer().dim[1].flags = 0;
-    }
-    mWrapTensorForInput.buffer().host = mStorage.buffer().host;
-    TensorUtils::setLinearLayout(&mWrapTensorForInput);
-
-    TensorUtils::copyShape(outputs[0], &mWrapTensorForOutput);
-    if (TensorUtils::getDescribe(input)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4 &&
-        mDimType == MNN_DATA_FORMAT_NHWC) {
-        TensorUtils::getDescribe(&mWrapTensorForOutput)->dimensionFormat = MNN_DATA_FORMAT_NHWC;
-        if (mWrapTensorForOutput.buffer().dimensions == 4) {
-            int channels                                = mWrapTensorForOutput.buffer().dim[1].extent;
-            mWrapTensorForOutput.buffer().dim[1].extent = mWrapTensorForOutput.buffer().dim[2].extent;
-            mWrapTensorForOutput.buffer().dim[2].extent = mWrapTensorForOutput.buffer().dim[3].extent;
-            mWrapTensorForOutput.buffer().dim[3].extent = channels;
-        }
-    }
-    if (outputs[0]->buffer().dimensions > 1) {
-        mWrapTensorForOutput.buffer().dim[1].flags = 0;
-    }
-    mWrapTensorForOutput.buffer().host = mStorage.buffer().host;
-    TensorUtils::setLinearLayout(&mWrapTensorForOutput);
+    convertTensorMeta(input, &mWrapTensorForInput);
+    convertTensorMeta(output, &mWrapTensorForOutput);
 
     return NO_ERROR;
 }
@@ -89,6 +81,13 @@ ErrorCode CPUReshape::onResize(const std::vector<Tensor *> &inputs, const std::v
 ErrorCode CPUReshape::onExecute(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     MNN_ASSERT(1 == inputs.size() || 2 == inputs.size());
     MNN_ASSERT(1 == outputs.size());
+    if (TensorUtils::getDescribe(inputs[0])->dimensionFormat != MNN_DATA_FORMAT_NC4HW4) {
+        auto outputPtr = outputs[0]->host<uint8_t>();
+        auto inputPtr = inputs[0]->host<uint8_t>();
+        auto totalSize = inputs[0]->size();
+        ::memcpy(outputPtr, inputPtr, totalSize);
+        return NO_ERROR;
+    }
 
     auto input  = inputs[0];
     auto output = outputs[0];

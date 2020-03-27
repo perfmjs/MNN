@@ -6,12 +6,12 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "CPUSoftmaxGrad.hpp"
-#include "CommonOptFunction.h"
-#include "ConvOpt.h"
-#include "Macro.h"
-#include "TensorUtils.hpp"
-#include "Vec4.hpp"
+#include "backend/cpu/CPUSoftmaxGrad.hpp"
+#include "backend/cpu/compute/CommonOptFunction.h"
+#include "backend/cpu/compute/ConvOpt.h"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include "math/Vec4.hpp"
 using namespace MNN::Math;
 namespace MNN {
 ErrorCode CPUSoftmaxGrad::onExecute(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
@@ -23,7 +23,7 @@ ErrorCode CPUSoftmaxGrad::onExecute(const std::vector<Tensor*>& inputs, const st
     auto softmaxPtr     = softmax->host<float>();
     auto gradSoftmaxPtr = gradSoftmax->host<float>();
     auto batch          = softmax->length(0);
-    if (TensorUtils::getDescribe(gradX)->dimensionFormat == MNN_DATA_FORMAT_NHWC) {
+    if (TensorUtils::getDescribe(gradX)->dimensionFormat == MNN_DATA_FORMAT_NHWC || TensorUtils::getDescribe(gradX)->dimensionFormat == MNN_DATA_FORMAT_NCHW) {
         // NHWC
         auto channel = softmax->length(1);
         MNN_ASSERT(channel > 0);
@@ -42,9 +42,9 @@ ErrorCode CPUSoftmaxGrad::onExecute(const std::vector<Tensor*>& inputs, const st
         }
         return NO_ERROR;
     }
-    auto channel = softmax->channel();
-    auto channelC4 = channel / 4;
-    auto channelAlign = ALIGN_UP4(channel);
+    auto channel       = softmax->channel();
+    auto channelC4     = channel / 4;
+    auto channelAlign  = ALIGN_UP4(channel);
     auto channelRemain = channelC4 * 4;
 
     for (int i = 0; i < batch; ++i) {
@@ -61,7 +61,7 @@ ErrorCode CPUSoftmaxGrad::onExecute(const std::vector<Tensor*>& inputs, const st
         for (int j = channelRemain; j < channel; ++j) {
             sum += s1[j] * s0[j];
         }
-        sumV      = Vec4(sum);
+        sumV = Vec4(sum);
         for (int j = 0; j < channelC4; ++j) {
             Vec4::save(dst + 4 * j, Vec4::load(s0 + 4 * j) * (Vec4::load(s1 + 4 * j) - sumV));
         }
@@ -77,7 +77,7 @@ public:
                                 const MNN::Op* op, Backend* backend) const override {
         auto axis = op->main_as_Axis()->axis();
         if (axis < 0) {
-            axis = inputs[0]->dimensions() - 1;
+            axis = inputs[0]->dimensions() + axis;
         }
         return new CPUSoftmaxGrad(axis, backend);
     }

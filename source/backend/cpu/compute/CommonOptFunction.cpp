@@ -9,12 +9,14 @@
 #include "CommonOptFunction.h"
 #include <string.h>
 #include <algorithm>
-#include "Macro.h"
 #include <math.h>
+#include "math/Vec4.hpp"
 #ifdef MNN_USE_NEON
 #include <arm_neon.h>
 #endif
+
 #define UNIT 4
+using namespace MNN::Math;
 
 void MNNScaleAndAddBiasOutside(float* dst, const float* src, const float* bias, const float* alpha, size_t planeNumber,
                                size_t biasNumber) {
@@ -98,7 +100,24 @@ void MNNAddC4WithStride(const float* source, float* dest, size_t srcStride, size
     }
 }
 
-#endif
+void MNNReluWithSlopeChannel(float* dst, const float* src, const float* slope, size_t sizeQuad, size_t depthQuad) {
+    for (int j = 0; j < depthQuad; j++) {
+        const float* slopeZ = slope + 4 * j;
+        const float* srcZ   = src + 4 * j * sizeQuad;
+        float* dstZ         = dst + 4 * j * sizeQuad;
+        for (int i = 0; i < sizeQuad; i++) {
+            for (int c = 0; c < 4; c++) {
+                if (srcZ[4 * i + c] < 0) {
+                    dstZ[4 * i + c] = srcZ[4 * i + c] * slopeZ[c];
+                } else {
+                    dstZ[4 * i + c] = srcZ[4 * i + c];
+                }
+            }
+        }
+    }
+}
+
+#endif // no MNN_USE_SSE
 
 void MNNMaxFloat(float* input, float* maxBuffer, int32_t inputCountUnit) {
     for (int i = 0; i < inputCountUnit; i++) {
@@ -118,32 +137,17 @@ void MNNMinFloat(float* input, float* minBuffer, int32_t inputCountUnit) {
         }
     }
 }
-
 void MNNScaleAndAddBias(float* dst, const float* src, const float* bias, const float* alpha, size_t planeNumber,
                         size_t biasNumber) {
     for (int z = 0; z < biasNumber; ++z) {
         float* dstZ         = dst + planeNumber * 4 * z;
         const float* srcZ   = src + planeNumber * 4 * z;
-        const float* biasZ  = bias + 4 * z;
-        const float* alphaZ = alpha + 4 * z;
+        auto biasZ = Vec4::load(bias + 4 * z);
+        auto alphaZ = Vec4::load(alpha + 4 * z);
         for (int p = 0; p < planeNumber; ++p) {
             float* dstX       = dstZ + 4 * p;
             const float* srcX = srcZ + 4 * p;
-            for (int i = 0; i < 4; ++i) {
-                dstX[i] = srcX[i] * alphaZ[i] + biasZ[i];
-            }
-        }
-    }
-}
-
-void MNNReluWithSlope(float* dst, const float* src, size_t sizeQuad, float slope) {
-    int i;
-    size_t size = sizeQuad * 4;
-    for (i = 0; i < size; ++i) {
-        if (src[i] < 0) {
-            dst[i] = src[i] * slope;
-        } else {
-            dst[i] = src[i];
+            Vec4::save(dstX, (Vec4::load(srcX) * alphaZ) + biasZ);
         }
     }
 }
@@ -162,6 +166,20 @@ void MNNPackC4(float* dst, const float* src, size_t area, size_t depth) {
     }
 }
 
+// void MNNPackC4Uint8(uint8_t* dst, const uint8_t* src, size_t area, size_t depth){
+//     int z, x;
+//     int cur = 0;
+//     memset(dst, 0, area * UP_DIV(depth, 4) * 4 * sizeof(uint8_t));
+//     for (z = 0; z < depth; ++z) {
+//         int plane       = z / 4;
+//         uint8_t* dstPlane = plane * area * 4 + dst;
+//         int offset      = z % 4;
+//         for (x = 0; x < area; ++x) {
+//             dstPlane[4 * x + offset] = src[cur++];
+//         }
+//     }
+// }
+
 void MNNUnpackC4(float* dst, const float* src, size_t area, size_t depth) {
     int x;
     int z;
@@ -176,22 +194,20 @@ void MNNUnpackC4(float* dst, const float* src, size_t area, size_t depth) {
     }
 }
 
-void MNNReluWithSlopeChannel(float* dst, const float* src, const float* slope, size_t sizeQuad, size_t depthQuad) {
-    for (int j = 0; j < depthQuad; j++) {
-        const float* slopeZ = slope + 4 * j;
-        const float* srcZ   = src + 4 * j * sizeQuad;
-        float* dstZ         = dst + 4 * j * sizeQuad;
-        for (int i = 0; i < sizeQuad; i++) {
-            for (int c = 0; c < 4; c++) {
-                if (srcZ[4 * i + c] < 0) {
-                    dstZ[4 * i + c] = srcZ[4 * i + c] * slopeZ[c];
-                } else {
-                    dstZ[4 * i + c] = srcZ[4 * i + c];
-                }
-            }
-        }
-    }
-}
+// void MNNUnpackC4Uint8(uint8_t* dst, const uint8_t* src, size_t area, size_t depth){
+//     int x;
+//     int z;
+//     int cur = 0;
+//     for (z = 0; z < depth; ++z) {
+//         int plane             = z / 4;
+//         const uint8_t* srcPlane = plane * area * 4 + src;
+//         int offset            = z % 4;
+//         for (x = 0; x < area; ++x) {
+//             dst[cur++] = srcPlane[4 * x + offset];
+//         }
+//     }
+// }
+
 
 void MNNUInt8ToInt16WithOffsetC4Common(int16_t* dst, const uint8_t* src, size_t zeroPoint, size_t sizeQuad,
                                        size_t dstStride, size_t srcStride) {
@@ -220,25 +236,15 @@ void MNNUInt8ToInt16WithOffsetC4Fast(int16_t* colAddr, const uint8_t* srcStart, 
 void MNNExpC8(float* dest, const float* source, const float* parameters, size_t countC8) {
     auto count = countC8 * 8;
     auto param = parameters[0];
+    float xLimit = 87;
     for (int i = 0; i < count; ++i) {
         auto x         = -source[i];
-        static float gLimit = (1 << 28);
-        if (x > gLimit) {
-            x = gLimit;
-        }
-        if (x < -gLimit) {
-            x = -gLimit;
-        }
+        x = ALIMAX(x, -xLimit);
+        x = ALIMIN(x, xLimit);
         int div        = (x * parameters[1]);
+        int div2       = (div + 127) << 23;
         auto xReamin   = x - div * param;
-        div            = std::min(div, 24);
-        div            = std::max(div, -24);
-        float expBasic = 1.0;
-        if (div < 0) {
-            expBasic = 1.0f / (1 << (-div));
-        } else {
-            expBasic = (float)(1 << div);
-        }
+        float expBasic = *(float*)(&div2);
         auto t = xReamin;
         auto expRemain =
             ((((parameters[7] * t + parameters[6]) * t + parameters[5]) * t + parameters[4]) * t + parameters[3]) * t +
@@ -247,6 +253,16 @@ void MNNExpC8(float* dest, const float* source, const float* parameters, size_t 
     }
 }
 
+void MNNReluInt8(int8_t* dst, const int8_t* src, size_t size) {
+    int i;
+    for (i = 0; i < size; ++i) {
+        if (src[i] < 0) {
+            dst[i] = 0;
+        } else {
+            dst[i] = src[i];
+        }
+    }
+}
 void MNNPowC8(float* dest, const float* source, const float* powfParam, size_t betaInt, size_t countC8) {
     const int count          = countC8 * 8;
     const float powfConstant = powfParam[6];
@@ -265,7 +281,36 @@ void MNNPowC8(float* dest, const float* source, const float* powfParam, size_t b
     }
 }
 
-#endif
+#endif // no MNN_USE_NEON
+
+
+void MNNPackC4Uint8(uint8_t* dst, const uint8_t* src, size_t area, size_t depth) {
+    int z, x;
+    int cur = 0;
+    memset(dst, 0, area * UP_DIV(depth, 4) * 4 * sizeof(uint8_t));
+    for (z = 0; z < depth; ++z) {
+        int plane         = z / 4;
+        uint8_t* dstPlane = plane * area * 4 + dst;
+        int offset        = z % 4;
+        for (x = 0; x < area; ++x) {
+            dstPlane[4 * x + offset] = src[cur++];
+        }
+    }
+}
+
+void MNNUnpackC4Uint8(uint8_t* dst, const uint8_t* src, size_t area, size_t depth) {
+    int x;
+    int z;
+    int cur = 0;
+    for (z = 0; z < depth; ++z) {
+        int plane               = z / 4;
+        const uint8_t* srcPlane = plane * area * 4 + src;
+        int offset              = z % 4;
+        for (x = 0; x < area; ++x) {
+            dst[cur++] = srcPlane[4 * x + offset];
+        }
+    }
+}
 
 void MNNTensorConvertNHWCToNC4HW4Uint8(uint8_t* dst, const uint8_t* src, size_t area, size_t depth) {
     if (depth == 4) {
@@ -550,33 +595,92 @@ void MNNExp(float* dst, const float* src, size_t dataSize) {
     }
     int remain = countC8 * 8;
     auto param = log(2.0f);
+    float xLimit = 87;
     for (int i = remain; i < dataSize; i++) {
         /*Origin Function*/
         //dst[i] = expf(-src[i]);
-        static float gLimit = (1 << 28);
-        
         /*Approciate Function*/
         
         auto x         = -src[i];
-        if (x > gLimit) {
-            x = gLimit;
-        }
-        if (x < -gLimit) {
-            x = -gLimit;
-        }
+        x = ALIMAX(x, -xLimit);
+        x = ALIMIN(x, xLimit);
         
         int div        = (x / param);
+        int div2       = (div + 127) << 23;
         auto xReamin   = x - div * param;
-        div            = std::min(div, 24);
-        div            = std::max(div, -24);
-        float expBasic = 1.0;
-        if (div < 0) {
-            expBasic = 1.0f / (1 << (-div));
-        } else {
-            expBasic = (float)(1 << div);
-        }
+        float expBasic = *(float*)(&div2);
+        
         auto t         = xReamin;
         auto expRemain = ((((1.0f / 120 * t + 1.0f / 24) * t + 1.0f / 6) * t + 0.5f) * t + 1.0f) * t + 1.0f;
         dst[i]  = expBasic * expRemain;
+    }
+}
+
+// Lambert's series with 7 divisions
+// reference from
+// https://varietyofsound.wordpress.com/2011/02/14/efficient-tanh-computation-using-lamberts-continued-fraction/
+inline float tanhf_poly(float value) {
+    if (value > 5.0) {
+        return 1.0;
+    } else if (value <= -5.0) {
+        return -1.0;
+    } else {
+        float x2 = value * value;
+        float a  = value * (135135.0f + x2 * (17325.0f + x2 * (378.0f + x2)));
+        float b  = 135135.0f + x2 * (62370.0f + x2 * (3150.0f + x2 * 28.0f));
+        return a / b;
+    }
+}
+void MNNTanh(float* dst, const float* src, size_t dataSize) {
+    for (int i = 0; i < dataSize; i++) {
+        // outputData[i] = 1 - 2 / (expf(2 * inputData[i]) + 1);
+        dst[i] = tanhf_poly(src[i]);
+    }
+}
+
+void MNNReluWithSlope(float* dst, const float* src, size_t sizeQuad, float slope) {
+    float slopeValue[4];
+    for (int i=0; i<4; ++i) {
+        slopeValue[i] = slope;
+    }
+    MNNReluWithSlopeChannel(dst, src, slopeValue, sizeQuad, 1);
+}
+void MNNReluWithSlopeCommon(float* dst, const float* src, size_t size, float slope) {
+    int sizeQuad = size / 4;
+    int start = 0;
+    if (sizeQuad > 0) {
+        MNNReluWithSlope(dst, src, sizeQuad, slope);
+        start = sizeQuad * 4;
+    }
+    for (int j = start; j < size; j++) {
+        if (src[j] < 0) {
+            dst[j] = src[j] * slope;
+        } else {
+            dst[j] = src[j];
+        }
+    }
+}
+
+void MNNScaleAndAddBiasScalar(float* dst, const float* src, float bias, float alpha, size_t number) {
+    int numberC4 = (int)number / 4;
+    int start = 0;
+    if (numberC4 > 0) {
+        float biasC4[4] = {
+            bias,
+            bias,
+            bias,
+            bias
+        };
+        float alphaC4[4] = {
+            alpha,
+            alpha,
+            alpha,
+            alpha
+        };
+        MNNScaleAndAddBias(dst, src, biasC4, alphaC4, numberC4, 1);
+        start = numberC4 * 4;
+    }
+    for (int i=start; i<number; ++i) {
+        dst[i] = src[i] * alpha + bias;
     }
 }

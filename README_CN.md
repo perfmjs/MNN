@@ -38,29 +38,44 @@ Converter由Frontends和Graph Optimize构成。前者负责支持不同的训练
 
 Interpreter由Engine和Backends构成。前者负责模型的加载、计算图的调度；后者包含各计算设备下的内存分配、Op实现。在Engine和Backends中，MNN应用了多种优化方案，包括在卷积和反卷积中应用Winograd算法、在矩阵乘法中应用Strassen算法、低精度计算、Neon优化、手写汇编、多线程优化、内存复用、异构计算等。
 
+## 论文
+如果MNN对你的研究有所助益，欢迎引用MNN的论文：
+
+    @inproceedings{alibaba2020mnn,
+      author = {Jiang, Xiaotang and Wang, Huan and Chen, Yiliu and Wu, Ziqi and Wang, Lichuan and Zou, Bin and Yang, Yafeng and Cui, Zongyang and Cai, Yu and Yu, Tianhang and Lv, Chengfei and Wu, Zhihua},
+      title = {MNN: A Universal and Efficient Inference Engine},
+      booktitle = {MLSys},
+      year = {2020}
+    }
+
+
 ## 开始使用
-- [编译与安装](doc/Install_CN.md)
-- [使用教程](doc/Tutorial_CN.md)
+- [使用方法](https://www.yuque.com/mnn/cn/usage)
+- [算子列表](https://www.yuque.com/mnn/en/ops)
 - [API文档](doc/API/API_index.html)
-- [示例Demo](demo)
-- [模型转换工具](tools/converter/README_CN.md)
-- [测试工具](doc/Tools_CN.md)
-- [Op 说明文档](doc/OpList.md)
-- [贡献代码](doc/Contributing_CN.md)
+- [示例](https://www.yuque.com/mnn/cn/demo_zoo)
 
-## 性能评测
-- [性能测试结果](doc/Benchmark_CN.md)
+## 工具
+- [测试工具](https://www.yuque.com/mnn/cn/tool_test)
+- [性能测试](https://www.yuque.com/mnn/cn/tool_benchmark)
+- [模型压缩](https://www.yuque.com/mnn/cn/tool_quantize)
+- [基于表达式构建模型并评测](benchmark/Readme_CN.md)
 
-## 如何扩展
-- [添加自定义Op](doc/AddOp_CN.md)
-- [添加自定义Backend](doc/AddBackend_CN.md)
+## 如何修改
+- [自定义后端](https://www.yuque.com/mnn/cn/customize_backend)
+- [自定义算子](https://www.yuque.com/mnn/cn/customize_op)
+- [贡献代码](https://www.yuque.com/mnn/cn/contribute)
+
+## 如何使用Python
+- [Python](https://www.yuque.com/mnn/cn/usage_in_python)
 
 ##  交流与反馈
-- [常见问题](doc/FAQ.md)
+- [常见问题](https://www.yuque.com/mnn/en/faq)
 
 扫描二维码加入钉钉讨论群。
 
-<img src="doc/QRCodeDingDing.png" height="256"/>
+<img src="doc/DingTalkQR1.png" height="256"/>
+<img src="doc/DingTalkQR2.png" height="256"/>
 
 ## License
 Apache 2.0
@@ -83,3 +98,5 @@ MNN参考、借鉴了下列项目：
 - [paddle-mobile](https://github.com/PaddlePaddle/paddle-mobile)
 - [stb](https://github.com/nothings/stb)
 - [rapidjson](https://github.com/Tencent/rapidjson)
+- [pybind11](https://github.com/pybind/pybind11)
+- [pytorch](https://github.com/pytorch/pytorch)

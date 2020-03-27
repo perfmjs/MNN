@@ -12,18 +12,21 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "Execution.hpp"
+#include "core/Execution.hpp"
 #include "MNN_generated.h"
-#include "Tensor.hpp"
+#include <MNN/Tensor.hpp>
+#include "core/TensorUtils.hpp"
 #define FLOPS_M 1000000.0f
 
 namespace MNN {
 
 /** computer for op. calculate input and output tensors' shape. when analyzing model, calculate flops too. */
-class SizeComputer {
+class MNN_PUBLIC SizeComputer {
     friend class SizeComputerSuite;
-
 public:
+    void setInputIndex(std::vector<int>&& index) {
+        mNeedContentInputIndex = std::move(index);
+    }
     /**
      * @brief deinitializer.
      */
@@ -59,10 +62,17 @@ public:
      */
     static bool computeOutputSize(const MNN::Op* op, const std::vector<Tensor*>& inputs,
                                   const std::vector<Tensor*>& outputs);
+    static float computeFlops(const MNN::Op* op, const std::vector<Tensor*>& inputs,
+                                  const std::vector<Tensor*>& outputs);
+
+    static std::vector<int> needInputContent(const MNN::Op* op);
+    static bool opNeedContent(const MNN::OpType type, int index);
+private:
+    std::vector<int> mNeedContentInputIndex;
 };
 
 /** size computer suite */
-class SizeComputerSuite {
+class MNN_PUBLIC SizeComputerSuite {
 public:
     /**
      * @brief deinitializer.
@@ -73,6 +83,7 @@ public:
      * @return shared instance.
      */
     static SizeComputerSuite* get();
+    static void init();
 
 public:
     /**
@@ -109,6 +120,12 @@ public:
         SizeComputerSuite* ts = SizeComputerSuite::get();
         ts->insert(test, type);
     }
+    SizeComputerRegister(OpType type, std::vector<int>&& index) {
+        T* test               = new T;
+        test->setInputIndex(std::move(index));
+        SizeComputerSuite* ts = SizeComputerSuite::get();
+        ts->insert(test, type);
+    }
 };
 } // namespace MNN
 
@@ -118,8 +135,16 @@ public:
         SizeComputerSuite* ts = SizeComputerSuite::get(); \
         ts->insert(new name, op);                         \
     }
+#define REGISTER_SHAPE_INPUTS(name, op, index)                          \
+void ___##name##__##op##__() {                        \
+SizeComputerSuite* ts = SizeComputerSuite::get(); \
+auto computer = new name;computer->setInputIndex(index);\
+ts->insert(computer, op);                         \
+}
+
 #else
 #define REGISTER_SHAPE(name, op) static SizeComputerRegister<name> _Shape##op(op)
+#define REGISTER_SHAPE_INPUTS(name, op, index) static SizeComputerRegister<name> _Shape##op(op, index)
 #endif
 
 #endif

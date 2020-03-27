@@ -6,11 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "SizeComputer.hpp"
+#include "core/SizeComputer.hpp"
 #include <stdlib.h>
-#include "Macro.h"
-#include "TensorUtils.hpp"
-
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
+#include <mutex>
 namespace MNN {
 #ifdef MNN_CODEGEN_REGISTER
 void registerShapeOps();
@@ -23,13 +23,20 @@ SizeComputerSuite::~SizeComputerSuite() {
     }
 }
 
-SizeComputerSuite* SizeComputerSuite::get() {
-    if (nullptr == gInstance) {
-        gInstance = new SizeComputerSuite;
+void SizeComputerSuite::init() {
 #ifdef MNN_CODEGEN_REGISTER
+    static std::once_flag _of;
+    std::call_once(_of, [&]() {
         registerShapeOps();
+    });
 #endif
-    }
+}
+
+SizeComputerSuite* SizeComputerSuite::get() {
+    static std::once_flag of;
+    std::call_once(of, [&]() {
+        gInstance = new SizeComputerSuite;
+    });
     return gInstance;
 }
 
@@ -49,6 +56,42 @@ float SizeComputer::onComputeFlops(const MNN::Op* op, const std::vector<Tensor*>
     MNN_ASSERT(outputs.size() >= 1);
     return (float)outputs[0]->elementSize() / 1024.0f / 1024.0f;
 }
+bool SizeComputer::opNeedContent(OpType type, int index) {
+    switch (type) {
+        case OpType_ZerosLike:
+        case OpType_ZeroGrad:
+        case OpType_Shape:
+        case OpType_Rank:
+        case OpType_Const:
+        case OpType_Size:
+        case OpType_PriorBox:
+            return false;
+        case OpType_Interp:
+        case OpType_Crop:
+        case OpType_Reshape:
+        case OpType_Resize:
+            if (1 == index) {
+                return false;
+            }
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+float SizeComputer::computeFlops(const MNN::Op* op, const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs) {
+    auto computeFactory = SizeComputerSuite::get();
+    auto computer = computeFactory->search(op->type());
+    if (nullptr != computer) {
+        return computer->onComputeFlops(op, inputs, outputs);
+    }
+    auto sumFlops = 0.0f;
+    for (auto output : outputs) {
+        sumFlops += (float)output->elementSize() / 1024.0f / 1024.0f;
+    }
+    return sumFlops;
+}
+
 bool SizeComputer::computeOutputSize(const MNN::Op* op, const std::vector<Tensor*>& inputs,
                                      const std::vector<Tensor*>& outputs) {
     auto computeFactory = SizeComputerSuite::get();
@@ -72,11 +115,25 @@ bool SizeComputer::computeOutputSize(const MNN::Op* op, const std::vector<Tensor
         ob.dimensions                                         = ib.dimensions;
         ob.type                                               = ib.type;
         TensorUtils::getDescribe(outputs[0])->dimensionFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+        
         return true;
     }
     // Not Support
-    MNN_PRINT("Can't compute size for %d, name=%s\n", op->type(), op->name()->c_str());
+    MNN_PRINT("Can't compute size for %d, name=%s\n", op->type(), op->name() ? op->name()->c_str() : "");
 
     return false;
 }
+
+std::vector<int> SizeComputer::needInputContent(const MNN::Op* op) {
+    auto computeFactory = SizeComputerSuite::get();
+    // When op is nullptr, it means a copy op
+    if (nullptr != op) {
+        auto computer = computeFactory->search(op->type());
+        if (nullptr != computer) {
+            return computer->mNeedContentInputIndex;
+        }
+    }
+    return std::vector<int>{};
+}
+
 } // namespace MNN

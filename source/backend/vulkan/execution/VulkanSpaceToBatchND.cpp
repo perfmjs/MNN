@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "VulkanSpaceToBatchND.hpp"
-#include "Macro.h"
-#include "TensorUtils.hpp"
+#include "backend/vulkan/execution/VulkanSpaceToBatchND.hpp"
+#include "core/Macro.h"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 
@@ -22,7 +22,7 @@ struct GpuParamSpaceBatch {
 VulkanSpaceToBatchND::VulkanSpaceToBatchND(const Op* op, Backend* bn) : VulkanBasicExecution(bn) {
     auto param        = op->main_as_SpaceBatch();
     mPadTop           = param->padding()->int32s()->data()[0];
-    mPadLeft          = param->padding()->int32s()->data()[1];
+    mPadLeft          = param->padding()->int32s()->data()[2];
     mBlockShapeHeight = param->blockShape()->int32s()->data()[0];
     mBlockShapeWidth  = param->blockShape()->int32s()->data()[1];
 
@@ -79,7 +79,7 @@ ErrorCode VulkanSpaceToBatchND::onEncode(const std::vector<Tensor*>& inputs, con
 
 class VulkanSpaceToBatchNDCreator : public VulkanBackend::Creator {
 public:
-    virtual Execution* onCreate(const std::vector<Tensor*>& inputs, const MNN::Op* op, Backend* bn) const override {
+    virtual VulkanBasicExecution* onCreate(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const MNN::Op* op, Backend* bn) const override {
         return new VulkanSpaceToBatchND(op, bn);
     }
 };

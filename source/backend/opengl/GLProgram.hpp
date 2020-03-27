@@ -10,8 +10,8 @@
 #define GLPROGRAM_H
 
 #include <string>
-#include "GLHead.hpp"
-#include "GLLock.hpp"
+#include "backend/opengl/GLHead.hpp"
+#include "backend/opengl/GLLock.hpp"
 namespace MNN {
 namespace OpenGL {
 class GLProgram {
@@ -23,7 +23,7 @@ public:
         return mProgramId;
     }
 
-    static std::string getHead();
+    static std::string getHead(std::string imageFormat);
 
     /*These API must be called in openGL context Thread*/
     void useProgram();

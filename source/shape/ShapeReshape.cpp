@@ -6,9 +6,9 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
-#include "TensorUtils.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
+#include "core/TensorUtils.hpp"
 
 namespace MNN {
 class ReshapeComputer : public SizeComputer {
@@ -36,12 +36,8 @@ public:
             dimSize         = inputShape->length(0);
             shapes.resize(dimSize);
             auto dim = inputShape->host<int32_t>();
-            std::shared_ptr<Tensor> inputShapeCopy;
-            if (dim == nullptr) {
-                inputShapeCopy.reset(Tensor::createHostTensorFromDevice(inputShape, true));
-                dim = inputShapeCopy.get()->host<int32_t>();
-            }
-            if (TensorUtils::getDescribe(inputs[0])->dimensionFormat != MNN_DATA_FORMAT_NHWC && 4 == dimSize) {
+            auto inputFormat = TensorUtils::getDescribe(inputs[0])->dimensionFormat;
+            if ((inputFormat == MNN_DATA_FORMAT_NC4HW4) && TensorUtils::getDescribe(inputShape)->dimensionFormat == MNN_DATA_FORMAT_NHWC) {
                 //NCHW / NC4HW4
                 //NHWC -> NCHW
                 shapes = {dim[0], dim[3], dim[1], dim[2]};
@@ -51,7 +47,6 @@ public:
                 }
             }
         }
-
         output->buffer().dimensions = dimSize;
 
         int determinAxis = -1;
@@ -78,9 +73,11 @@ public:
         }
         if (determinAxis >= 0) {
             output->buffer().dim[determinAxis].extent = totalSizeInput / totalSizeOutput;
+            totalSizeOutput *= output->buffer().dim[determinAxis].extent;
         }
-        if (output->buffer().dimensions >= 2) {
-            output->buffer().dim[1].flags = input->buffer().dim[1].flags;
+        if (totalSizeInput != totalSizeOutput) {
+            MNN_PRINT("Reshape error: %d -> %d\n", totalSizeInput, totalSizeOutput);
+            return false;
         }
         TensorUtils::getDescribe(output)->dimensionFormat = TensorUtils::getDescribe(input)->dimensionFormat;
 
@@ -88,5 +85,5 @@ public:
     }
 };
 
-REGISTER_SHAPE(ReshapeComputer, OpType_Reshape);
+REGISTER_SHAPE_INPUTS(ReshapeComputer, OpType_Reshape, {1});
 } // namespace MNN

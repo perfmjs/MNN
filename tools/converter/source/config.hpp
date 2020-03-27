@@ -11,8 +11,6 @@
 #include <mutex>
 #include <string>
 
-#include "CONFIGURECONVERT.h"
-
 class ProjectConfig {
 public:
     static const std::string version;
@@ -36,7 +34,8 @@ public:
           modelFile(),
           bizCode("MNN"),
           model(modelConfig::MAX_SOURCE),
-          benchmarkModel(false) {
+          benchmarkModel(false),
+          saveHalfFloat(false){
     }
     enum MODEL_SOURCE { TENSORFLOW = 0, CAFFE, ONNX, MNN, TFLITE, MAX_SOURCE };
 
@@ -51,6 +50,8 @@ public:
     // model source
     MODEL_SOURCE model;
     bool benchmarkModel;
+    bool saveHalfFloat;
+    bool forTraining = false;
 };
 
 #endif // CONFIG_HPP

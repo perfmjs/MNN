@@ -6,13 +6,11 @@
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
 
-#include "Macro.h"
-#include "SizeComputer.hpp"
+#include "core/Macro.h"
+#include "core/SizeComputer.hpp"
 
 namespace MNN {
-// –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 // Size Computer
-// –––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 class ResizeComputer : public SizeComputer {
     virtual bool onComputeSize(const MNN::Op *op, const std::vector<Tensor *> &inputs,
                                const std::vector<Tensor *> &outputs) const override {
@@ -23,11 +21,12 @@ class ResizeComputer : public SizeComputer {
         auto resize  = op->main_as_Resize();
         auto &input  = inputs[0]->buffer();
         auto &output = outputs[0]->buffer();
-        ::memcpy(output.dim, input.dim, sizeof(halide_dimension_t) * input.dimensions);
+        TensorUtils::copyShape(inputs[0], outputs[0], true);
 
         // set dims
         output.dim[3].extent = input.dim[3].extent * resize->xScale();
         output.dim[2].extent = input.dim[2].extent * resize->yScale();
+        output.type = inputs[0]->getType();
 
         return true;
     }
