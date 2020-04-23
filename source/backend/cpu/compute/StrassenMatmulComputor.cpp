@@ -147,22 +147,22 @@ ErrorCode StrassenMatrixComputor::_generateTrivalMatMul(const Tensor* AT, const 
         aHost = tempHost;
     }
     if (e == CONVOLUTION_TILED_NUMBER) {
-        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, h, cStride, bStride, numberThread](int tId) {
-            for (int y=tId; y<h; y+=numberThread) {
-                MNNGemmFloatUnit_4(cHost + cStride * y, aHost, bHost + bStride * y, l, 0, 1, 0);
-            }
+        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, h, cStride, bStride, numberThread, bExtraStride](int tId) {
+            int yStep = UP_DIV(h, numberThread), yStart = tId * yStep, yNum = ALIMIN(yStart + yStep, h) - yStart;
+            if (yNum <= 0) return;
+            MNNGemmFloatUnit_4(cHost + cStride * yStart, aHost, bHost + bStride * yStart, l, cStride, yNum, bExtraStride);
         }, numberThread));
     } else if (e == 1) {
-        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, h, cStride, bStride, numberThread](int tId) {
-            for (int y=tId; y<h; y+=numberThread) {
-                MNNGemmFloatOne_4(cHost + y * cStride, aHost, bHost + y * bStride, l, 0, 1, 0);
-            }
+        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, h, cStride, bStride, numberThread, bExtraStride](int tId) {
+            int yStep = UP_DIV(h, numberThread), yStart = tId * yStep, yNum = ALIMIN(yStart + yStep, h) - yStart;
+            if (yNum <= 0) return;
+            MNNGemmFloatOne_4(cHost + yStart * cStride, aHost, bHost + yStart * bStride, l, cStride, yNum, bExtraStride);
         }, numberThread));
     } else {
-        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, e, h, cStride, bStride, numberThread](int tId) {
-            for (int y=tId; y<h; y+=numberThread) {
-                MNNGemmFloatCommon_4(cHost + y * cStride, aHost, bHost + bStride * y, l, 0, 1, e, 0);
-            }
+        mFunctions.emplace_back(std::make_pair([aHost, bHost, cHost, l, e, h, cStride, bStride, numberThread, bExtraStride](int tId) {
+            int yStep = UP_DIV(h, numberThread), yStart = tId * yStep, yNum = ALIMIN(yStart + yStep, h) - yStart;
+            if (yNum <= 0) return;
+            MNNGemmFloatCommon_4(cHost + yStart * cStride, aHost, bHost + bStride * yStart, l, cStride, yNum, e, bExtraStride);
         }, numberThread));
     }
     return NO_ERROR;
@@ -200,7 +200,6 @@ ErrorCode StrassenMatrixComputor::_generateMatMul(const Tensor* AT, const Tensor
     if (currentDepth >= mMaxDepth || e <= CONVOLUTION_TILED_NUMBER || l % 2 != 0 || h % 2 != 0 || saveCost < 0.0f) {
         return _generateTrivalMatMul(AT, BT, CT);
     }
-    // MNN_PRINT("saveCost = %f, e=%d, l=%d, h=%d\n", saveCost, e, l, h);
 
     // Strassen Construct
     auto bn = backend();
